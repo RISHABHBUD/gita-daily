@@ -1,0 +1,13 @@
+# Gita Daily Bot dependencies
+Pillow
+uharfbuzz
+freetype-py
+requests
+moviepy>=2.0
+numpy
+imageio[ffmpeg]
+edge-tts
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+gtts
