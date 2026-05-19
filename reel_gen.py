@@ -486,19 +486,30 @@ def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
 
     hindi = shloka.get("hindi_explanation", "")
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
-    for fsize in [40, 36, 32, 28]:
-        lines = wrap_devanagari(hindi, hb_path or "", fsize, W - 120) if hb_path else \
-                wrap_text(d, hindi, font(fsize, False, devanagari=True), W - 120, language="hi")
-        if len(lines) * (fsize + 20) <= 700:
+
+    # Card text area: card top=120, header+bar takes ~190px, card bottom=H-200, footer~132px
+    # Safe text zone: roughly y=310 to y=H-200-20 → max_text_h ≈ H - 530
+    MAX_TEXT_H = H - 530
+
+    fsize = 40
+    for fsize in [40, 36, 32, 28, 24, 20]:
+        lines = wrap_devanagari(hindi, hb_path or "", fsize, W - 140) if hb_path else \
+                wrap_text(d, hindi, font(fsize, False, devanagari=True), W - 140, language="hi")
+        lh = fsize + 18
+        if len(lines) * lh <= MAX_TEXT_H:
             break
 
     n = len(lines)
     # All lines appear together the moment bridge voice ends, then stay visible
     text_start_frac = min(0.95, bridge_sec / max(total, 1.0))
     reveal_end_frac = min(0.99, text_start_frac + 0.15)
-    lh = fsize + 20
+    lh = fsize + 18
     block_h = n * lh
-    vy = int(H // 2 - block_h // 2 + 6 * breathe(t, 0.4, 0.45, 5.5))
+    # Clamp start y so block never goes above header area or below card bottom
+    card_text_top = 310
+    card_text_bot = H - 220
+    center_y = H // 2 - block_h // 2 + int(6 * breathe(t, 0.4, 0.45, 5.5))
+    vy = max(card_text_top, min(center_y, card_text_bot - block_h))
 
     for line in lines:
         a = int(255 * smoothstep(prog(t, total * text_start_frac, total * reveal_end_frac)))
@@ -778,18 +789,18 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
     Generate shloka reel from gita_data.json entry.
 
     Flow:
-      intro  →  hindi_explanation  →  english_explanation  →  life_lesson  →  outro
+      intro  →  sanskrit  →  hindi_explanation  →  life_lesson  →  outro
 
     TTS voices:
       intro        : "Geeta ka gyaan..." hook + "adhyay X, shlok Y"
       bridge_hindi : "Aayiye, iss shloka ki Hindi vyakhya samajhte hain."
       hindi        : hindi_explanation
-      bridge_en    : "Now let's understand this in English."
-      english      : english_explanation
       bridge_lesson: "Aur iska jeevan sandesh hai..."
       lesson_hi    : life_lesson_hindi
       lesson_en    : life_lesson_english (English TTS)
       jai          : "Jai Shree Krishna"
+
+    Speed: final video is played at 1.2x (video + audio both sped up).
     """
     global W, H, FPS
     _saved_dims = (W, H, FPS)
@@ -808,7 +819,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
             "intro":    10.0,
             "sanskrit":  6.0,
             "hindi":     7.0,
-            "english":   6.0,
             "lesson":    6.0,
             "outro":     3.0,
         }
@@ -860,14 +870,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
                 shloka.get("hindi_explanation", ""),
                 "hi", os.path.join(tts_dir, "tts_hindi.mp3"), rate="-16%"
             ),
-            "bridge_english": generate_tts(
-                "Now let's understand this in English.",
-                "en", os.path.join(tts_dir, "tts_bridge_english.mp3"), rate="+5%"
-            ),
-            "english": generate_tts(
-                shloka.get("english_explanation", ""),
-                "en", os.path.join(tts_dir, "tts_english.mp3"), rate="+5%"
-            ),
             "bridge_lesson": generate_tts(
                 "Is shloka se hame ye sikhna chahiye ki",
                 "hi", os.path.join(tts_dir, "tts_bridge_lesson.mp3"), rate="-5%"
@@ -914,12 +916,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
         actual["hindi"] = max(bh + 0.15 + hi + 0.5, 4.0)
         print(f"  TTS hindi: bridge({bh:.1f}s) + explanation({hi:.1f}s) → {actual['hindi']:.1f}s")
 
-        # English: bridge + 0.15s + explanation + 1.5s tail
-        be = _dur("bridge_english")
-        en = _dur("english")
-        actual["english"] = max(be + 0.15 + en + 1.5, 4.0)
-        print(f"  TTS english: bridge({be:.1f}s) + explanation({en:.1f}s) → {actual['english']:.1f}s")
-
         # Lesson: bridge + 0.15s + hindi lesson + 0.15s + english lesson + 4.0s tail
         bl = _dur("bridge_lesson")
         lh_dur = _dur("lesson_hi")
@@ -938,7 +934,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
             make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"]),
             make_clip(frame_sanskrit, actual["sanskrit"], shloka=shloka, total=actual["sanskrit"]),
             make_clip(frame_hindi,    actual["hindi"],    shloka=shloka, total=actual["hindi"],   bridge_sec=bh + 0.15),
-            make_clip(frame_english,  actual["english"],  shloka=shloka, total=actual["english"], bridge_sec=be + 0.15 + FADE),
             make_clip(frame_lesson,   actual["lesson"],   shloka=shloka, total=actual["lesson"], bridge_sec=bl + 0.15 + 1.05 + 1.0, lesson_hi_dur=lh_dur),
             make_clip(frame_outro,    actual["outro"],    total=actual["outro"]),
         ]
@@ -989,8 +984,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
             build_section([("sanskrit", 0.0)], actual["sanskrit"]),
             # Hindi: bridge → 0.15s → explanation → pad
             build_section([("bridge_hindi", 0.15), ("hindi", 0.0)], actual["hindi"]),
-            # English: bridge → 0.15s → explanation → pad (0.5s tail built into actual["english"])
-            build_section([("bridge_english", 0.15), ("english", 0.0)], actual["english"]),
             # Lesson: bridge → 0.15s → hindi lesson → 0.15s → english lesson → pad
             build_section([("bridge_lesson", 0.15), ("lesson_hi", 0.15), ("lesson_en", 0.0)], actual["lesson"]),
             # Outro: Jai Shree Krishna fires immediately, CTA is visual only
@@ -1003,33 +996,74 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
         bot_dir = os.path.dirname(os.path.abspath(__file__))
         bg_path = pick_background_track(bot_dir)
 
+        SPEED = 1.2
+        sped_dur = total_dur / SPEED
+
+        # ── Speed up TTS audio via rubberband (tempo up, pitch preserved) ────
+        # Write raw TTS to a temp file, then use ffmpeg rubberband filter to
+        # stretch tempo without pitch shift, producing natural-sounding fast voice.
+        print("  Applying rubberband tempo stretch to TTS audio...")
+        from moviepy.config import FFMPEG_BINARY
+        import subprocess, tempfile
+
+        raw_tts_path = os.path.join(tts_dir, "_tts_raw.wav")
+        stretched_tts_path = os.path.join(tts_dir, "_tts_stretched.wav")
+        tts_audio.write_audiofile(raw_tts_path, fps=44100, logger=None)
+
+        rb_cmd = [
+            FFMPEG_BINARY, "-y", "-i", raw_tts_path,
+            "-af", f"rubberband=tempo={SPEED}:pitch=1.0",
+            stretched_tts_path
+        ]
+        try:
+            subprocess.run(rb_cmd, check=True, capture_output=True)
+            tts_final = AudioFileClip(stretched_tts_path)
+            print(f"  [✓] Rubberband stretch: {total_dur:.1f}s → {tts_final.duration:.1f}s (pitch preserved)")
+        except Exception as e:
+            print(f"  [!] Rubberband failed ({e}), falling back to atempo")
+            # atempo fallback — max factor per filter is 2.0, chain if needed
+            atempo = SPEED if SPEED <= 2.0 else 2.0
+            atempo_filter = f"atempo={atempo}"
+            fb_cmd = [
+                FFMPEG_BINARY, "-y", "-i", raw_tts_path,
+                "-af", atempo_filter,
+                stretched_tts_path
+            ]
+            subprocess.run(fb_cmd, check=True, capture_output=True)
+            tts_final = AudioFileClip(stretched_tts_path)
+
+        # ── Background music (trimmed to sped duration) ───────────────────────
         if bg_path and os.path.isfile(bg_path):
             try:
                 from moviepy import CompositeAudioClip
                 probe = AudioFileClip(bg_path)
                 clip_len = float(probe.duration)
                 probe.close()
-                if clip_len + 0.01 < total_dur:
-                    loops, rem = [], total_dur
+                if clip_len + 0.01 < sped_dur:
+                    loops, rem = [], sped_dur
                     while rem > 1e-3:
                         seg = min(rem, clip_len)
                         loops.append(AudioFileClip(bg_path).subclipped(0, seg))
                         rem -= seg
                     bg = concatenate_audioclips(loops)
                 else:
-                    bg = AudioFileClip(bg_path).subclipped(0, min(total_dur, clip_len))
+                    bg = AudioFileClip(bg_path).subclipped(0, min(sped_dur, clip_len))
                 bg = bg.with_volume_scaled(0.25)
-                video = video.with_audio(CompositeAudioClip([tts_audio, bg]))
+                final_audio = CompositeAudioClip([tts_final, bg])
                 print(f"  [✓] TTS + music ({os.path.basename(bg_path)}) @ 25%")
             except Exception as e:
                 print(f"  [!] Music skipped: {e}")
-                video = video.with_audio(tts_audio)
+                final_audio = tts_final
         else:
-            video = video.with_audio(tts_audio)
+            final_audio = tts_final
             print("  [✓] TTS only (no music file found)")
 
-        print(f"  Writing video ({total_dur:.1f}s)...")
-        video.write_videofile(
+        # ── Speed up video frames only (no audio), attach stretched audio ─────
+        video_fast = video.with_speed_scaled(SPEED)
+        video_fast = video_fast.with_audio(final_audio)
+
+        print(f"  Writing video ({total_dur:.1f}s → {sped_dur:.1f}s at {SPEED}x)...")
+        video_fast.write_videofile(
             output_path,
             fps=FPS,
             codec="libx264",
