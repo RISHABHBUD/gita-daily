@@ -12,7 +12,9 @@ Usage:
 import os, sys, json, argparse
 from datetime import datetime
 
-from config import OUTPUT_FOLDER, GITA_FILE, POSTED_FILE
+from config import OUTPUT_FOLDER, POSTED_FILE
+
+GITA_FILE = "gita_data.json"
 
 
 CHAPTER_TITLES = {
@@ -56,6 +58,8 @@ def main():
                         help="Specific day number (1-700)")
     parser.add_argument("--fast-preview", action="store_true",
                         help="With --test: faster reel (540x960 @ 16fps). Ignored without --test.")
+    parser.add_argument("--image-only", action="store_true",
+                        help="Generate and post image only, skip reel")
     args = parser.parse_args()
 
     if args.fast_preview and not args.test:
@@ -106,15 +110,19 @@ def main():
         print("\n[2/4] Skipping image (--reel-only)")
 
     # Generate reel
-    print("\n[3/4] Generating reel...")
-    from reel_gen import create_shloka_reel
-    reel_path = os.path.join(out_dir, "reel.mp4")
-    create_shloka_reel(
-        shloka,
-        reel_path,
-        day_number,
-        fast_preview=bool(args.test and args.fast_preview),
-    )
+    if not args.image_only:
+        print("\n[3/4] Generating reel...")
+        from reel_gen import create_shloka_reel
+        reel_path = os.path.join(out_dir, "reel.mp4")
+        create_shloka_reel(
+            shloka,
+            reel_path,
+            day_number,
+            fast_preview=bool(args.test and args.fast_preview),
+        )
+    else:
+        reel_path = None
+        print("\n[3/4] Skipping reel (--image-only)")
 
     # Build caption
     caption = build_caption(shloka, day_number)
@@ -132,7 +140,12 @@ def main():
 
     # Post to platforms
     print("\n[4/4] Posting to platforms...")
-    _post_all(image_path, reel_path, caption, shloka, day_number)
+    if args.image_only:
+        _post_image(image_path, caption)
+    elif args.reel_only:
+        _post_reel(reel_path, caption, shloka, day_number)
+    else:
+        _post_all(image_path, reel_path, caption, shloka, day_number)
 
     print(f"\n✅ Done! Saved in: {out_dir}\n")
 
@@ -144,9 +157,9 @@ def build_caption(shloka, day_number):
         f"🕉️ Bhagavad Gita — Chapter {ch}, Verse {v}",
         f"Day {day_number} of 700",
         "",
-        shloka["english"],
+        shloka.get("english_explanation", ""),
         "",
-        f"💡 {shloka['lesson']}",
+        f"💡 {shloka.get('life_lesson_english', '')}",
         "",
         "─" * 30,
         f"Follow {PAGE_HANDLE} for daily Gita wisdom",
@@ -156,45 +169,58 @@ def build_caption(shloka, day_number):
     return "\n".join(lines)
 
 
-def _post_all(image_path, reel_path, caption, shloka, day_number):
-    """Post image + reel to Instagram, Facebook, YouTube."""
+def _post_image(image_path, caption):
+    """Post image to Instagram + Facebook."""
+    from platform.poster import (upload_image_to_cloudinary,
+                                  post_to_instagram, post_image_to_facebook)
+    print("  Uploading image to Cloudinary...")
+    img_url = upload_image_to_cloudinary(image_path)
+
+    print("  Posting image to Instagram...")
+    post_to_instagram(img_url, caption)
+
+    print("  Posting image to Facebook...")
     try:
-        # Import poster (copy from stock-news-bot and update FB_PAGE_ID)
-        from poster import (upload_to_cloudinary, post_to_instagram,
-                            post_image_to_facebook,
-                            post_reel_to_instagram, post_video_to_facebook)
-        from run_reel_helper import upload_video_to_cloudinary
+        post_image_to_facebook(img_url, caption)
+    except Exception as e:
+        print(f"  [!] FB image failed (non-fatal): {e}")
 
-        # Image post
-        print("  Posting image to Instagram...")
-        img_url = upload_to_cloudinary(image_path)
-        post_to_instagram(img_url, caption)
-        try: post_image_to_facebook(img_url, caption)
-        except Exception as e: print(f"  [!] FB image: {e}")
 
-        # Reel
-        print("  Posting reel to Instagram...")
-        vid_url = upload_video_to_cloudinary(reel_path)
-        post_reel_to_instagram(vid_url, caption)
-        try:
-            title = f"BG {shloka['chapter']}.{shloka['verse']} | Day {day_number} | GitaDaily"
-            post_video_to_facebook(reel_path, caption, title=title)
-        except Exception as e: print(f"  [!] FB reel: {e}")
+def _post_reel(reel_path, caption, shloka, day_number):
+    """Post reel to Instagram, Facebook, and YouTube."""
+    from platform.poster import (upload_video_to_cloudinary,
+                                  post_reel_to_instagram, post_video_to_facebook)
+    from platform.youtube_upload import upload_to_youtube
 
-        # YouTube
-        print("  Uploading to YouTube...")
-        try:
-            from youtube_upload import upload_to_youtube
-            yt_title = (f"Bhagavad Gita Ch{shloka['chapter']} V{shloka['verse']} | "
-                        f"Day {day_number} | {shloka.get('chapter_name','')} #Shorts")
-            upload_to_youtube(reel_path, yt_title, caption)
-        except FileNotFoundError:
-            print("  [!] YouTube credentials not found")
-        except Exception as e:
-            print(f"  [!] YouTube: {e}")
+    print("  Uploading reel to Cloudinary...")
+    vid_url = upload_video_to_cloudinary(reel_path)
 
-    except ImportError as e:
-        print(f"  [!] poster.py not found — copy from stock-news-bot: {e}")
+    print("  Posting reel to Instagram...")
+    post_reel_to_instagram(vid_url, caption)
+
+    print("  Posting reel to Facebook...")
+    try:
+        title = (f"BG {shloka['chapter']}.{shloka['verse']} | "
+                 f"Day {day_number} | GitaDaily")
+        post_video_to_facebook(reel_path, caption, title=title)
+    except Exception as e:
+        print(f"  [!] FB reel failed (non-fatal): {e}")
+
+    print("  Uploading to YouTube...")
+    try:
+        yt_title = (f"Bhagavad Gita Ch{shloka['chapter']} V{shloka['verse']} | "
+                    f"Day {day_number} | {shloka.get('chapter_name', '')} #Shorts")
+        upload_to_youtube(reel_path, yt_title, caption)
+    except FileNotFoundError:
+        print("  [!] YouTube credentials not found — skipping")
+    except Exception as e:
+        print(f"  [!] YouTube failed (non-fatal): {e}")
+
+
+def _post_all(image_path, reel_path, caption, shloka, day_number):
+    """Post both image and reel to all platforms."""
+    _post_image(image_path, caption)
+    _post_reel(reel_path, caption, shloka, day_number)
 
 
 if __name__ == "__main__":

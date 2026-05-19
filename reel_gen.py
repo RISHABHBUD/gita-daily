@@ -2,7 +2,8 @@
 Gita Daily Bot — Reel Generator (calm light theme)
 
 1080×1920 vertical reel: soft gradients, slow motion, gentle typography.
-Same sections and copy as before: intro → Sanskrit → Hindi → English → outro.
+Flow: intro → hindi_explanation → english_explanation → life_lesson → outro
+Data source: gita_data.json
 """
 
 import math
@@ -62,9 +63,7 @@ def font(size, bold=False, devanagari=False, hindi_prose=False):
                 "C:/Windows/Fonts/segoeuib.ttf",
                 "C:/Windows/Fonts/calibrib.ttf",
                 "C:/Windows/Fonts/Georgia.ttf",
-                "arialbd.ttf",
-                "Arial_Bold.ttf",
-                "DejaVuSans-Bold.ttf",
+                "arialbd.ttf", "Arial_Bold.ttf", "DejaVuSans-Bold.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             ]
@@ -75,9 +74,7 @@ def font(size, bold=False, devanagari=False, hindi_prose=False):
                 "C:/Windows/Fonts/calibri.ttf",
                 "C:/Windows/Fonts/constan.ttf",
                 "C:/Windows/Fonts/Georgia.ttf",
-                "arial.ttf",
-                "Arial.ttf",
-                "DejaVuSans.ttf",
+                "arial.ttf", "Arial.ttf", "DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             ]
@@ -113,7 +110,6 @@ def smoothstep(t):
 
 
 def ease_io(t):
-    """Ease in-out sine — very gentle."""
     t = clamp(t)
     return 0.5 - 0.5 * math.cos(math.pi * t)
 
@@ -127,7 +123,6 @@ def lerp_col(c1, c2, t):
 
 
 def lerp_col3(c1, c2, c3, t):
-    """t in [0,1]: top→mid→bot."""
     if t < 0.5:
         return lerp_col(c1, c2, t * 2.0)
     return lerp_col(c2, c3, (t - 0.5) * 2.0)
@@ -144,10 +139,8 @@ def base_canvas(t=0.0):
     for y in range(H):
         u = y / H + drift * (1.0 - abs(y / H - 0.5))
         arr[y] = lerp_col3(R_GRAD_TOP, R_GRAD_MID, R_GRAD_BOT, clamp(u))
-    img = Image.fromarray(arr)
-    img = img.convert("RGBA")
+    img = Image.fromarray(arr).convert("RGBA")
 
-    # Soft bokeh orbs (slow drift)
     bokeh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bd = ImageDraw.Draw(bokeh)
     seeds = [(0.22, 0.18, 140), (0.78, 0.25, 180), (0.55, 0.72, 220), (0.15, 0.62, 160), (0.88, 0.58, 130)]
@@ -157,16 +150,12 @@ def base_canvas(t=0.0):
         cx_ = int(fx * W + ox)
         cy_ = int(fy * H + oy)
         rr = int(r0 + 12 * math.sin(t * 0.9 + i))
-        for layer, alpha in [(1.0, 18), (0.65, 28), (0.35, 38)]:
-            rr2 = int(rr * layer)
-            bd.ellipse(
-                [cx_ - rr2, cy_ - rr2, cx_ + rr2, cy_ + rr2],
-                fill=(*R_BOKEH, alpha),
-            )
+        for layer_f, alpha in [(1.0, 18), (0.65, 28), (0.35, 38)]:
+            rr2 = int(rr * layer_f)
+            bd.ellipse([cx_ - rr2, cy_ - rr2, cx_ + rr2, cy_ + rr2], fill=(*R_BOKEH, alpha))
     bokeh = bokeh.filter(ImageFilter.GaussianBlur(radius=max(5, int(round(18 * W / float(_PROD_W))))))
     img = Image.alpha_composite(img, bokeh)
 
-    # Gentle radial vignette (soft edges, no harsh lines)
     base_rgb = img.convert("RGB")
     arr = np.asarray(base_rgb, dtype=np.float32)
     yy, xx = np.ogrid[:H, :W]
@@ -179,25 +168,19 @@ def base_canvas(t=0.0):
     arr = arr * (1.0 - vig) + vc * vig
     img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
 
-    # Whisper grain
     rng = np.random.default_rng(int(t * 120) + 7)
     noise = rng.integers(0, 5, size=(H, W), dtype=np.uint8)
     layer = Image.fromarray(noise, "L").convert("RGB")
     base_rgb = img.convert("RGB")
     layer = ImageChops.multiply(layer, Image.new("RGB", (W, H), (255, 255, 255)))
-    base_rgb = ImageChops.soft_light(base_rgb, layer)
-    return base_rgb
+    return ImageChops.soft_light(base_rgb, layer)
 
 
 def draw_text_soft(img, xy, text, fnt, fill, shadow=(220, 225, 222), opacity=1.0, language=None):
-    """Subtle lifted shadow for readability on light backgrounds."""
     x, y = xy
     tkw = raqm_text_kwargs(language=language)
-    if isinstance(fill, tuple) and len(fill) == 4:
-        rgba_fill = fill
-    else:
-        o = int(255 * opacity)
-        rgba_fill = (*fill[:3], o) if len(fill) == 3 else fill
+    o = int(255 * opacity)
+    rgba_fill = (*fill[:3], o) if len(fill) == 3 else fill
     ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(ov)
     for dx, dy, a in [(3, 3, 22), (2, 2, 14), (1, 1, 10)]:
@@ -207,7 +190,6 @@ def draw_text_soft(img, xy, text, fnt, fill, shadow=(220, 225, 222), opacity=1.0
 
 
 def draw_text_alpha(img, xy, text, fnt, rgb, alpha, language=None):
-    """Text with explicit alpha 0–255."""
     x, y = xy
     a = int(clamp(float(alpha), 0.0, 255.0))
     if a < 1:
@@ -219,35 +201,26 @@ def draw_text_alpha(img, xy, text, fnt, rgb, alpha, language=None):
 
 
 def frosted_card(img, box, radius=28, rim=R_CARD_RIM, fill_alpha=235):
-    """Light frosted panel. Lower fill_alpha lets peaceful background motion show through."""
     x0, y0, x1, y1 = box
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     d.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=(*R_CARD, int(fill_alpha)))
     d.rounded_rectangle([x0, y0, x1, y1], radius=radius, outline=(*rim, 200), width=1)
-    out = Image.alpha_composite(img.convert("RGBA"), layer)
-    return out.convert("RGB")
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+
+
+def rgba_overlay(img, draw_fn):
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw_fn(layer, ImageDraw.Draw(layer))
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
 
 def peaceful_motion_layer(t, style):
-    """
-    Full-frame soft motion behind the card (different per section, not the intro rings).
-    style: 'sanskrit' | 'hindi' | 'english'
-    """
+    """style: 'hindi' | 'english' | 'lesson'"""
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     dr = ImageDraw.Draw(layer)
 
-    if style == "sanskrit":
-        # Drifting soft petals / dots — sage mist
-        for k in range(9):
-            ph = k * 0.8
-            x = int(W * (0.12 + 0.09 * k) + 55 * math.sin(t * 0.45 + ph))
-            y = int(H * (0.35 + 0.05 * (k % 3)) + 40 * math.cos(t * 0.38 + ph * 0.7))
-            r = 22 + (k % 4) * 10
-            dr.ellipse([x - r, y - r, x + r, y + r], fill=(*R_SAGE_LIGHT, 14))
-            dr.ellipse([x - r // 2, y - r // 2, x + r // 2, y + r // 2], fill=(*R_SAGE, 10))
-    elif style == "hindi":
-        # Slow wide ribbons — rose wash
+    if style == "hindi":
         for k in range(5):
             yb = int(H * (0.22 + k * 0.14) + 30 * math.sin(t * 0.25 + k))
             pts = []
@@ -261,8 +234,7 @@ def peaceful_motion_layer(t, style):
             cx_ = int(W * (0.15 + 0.14 * k) + 25 * math.sin(t * 0.5 + k))
             cy_ = int(H * (0.55 + 0.06 * (k % 2)) + 20 * math.cos(t * 0.42 + k))
             dr.ellipse([cx_ - 80, cy_ - 28, cx_ + 80, cy_ + 28], fill=(*R_ROSE, 8))
-    else:
-        # English: gentle rising motes — pale gold
+    elif style == "english":
         for k in range(14):
             ph = k * 1.1
             x = int(W * (0.08 + (k * 0.067) % 0.86) + 20 * math.sin(t * 0.35 + ph))
@@ -275,30 +247,28 @@ def peaceful_motion_layer(t, style):
                 [ox + k * 280 - 60, 200 + k * 220, ox + k * 280 + 220, 520 + k * 180],
                 start=int(t * 25 + k * 40) % 360,
                 end=int(t * 25 + k * 40) % 360 + 70,
-                fill=(*R_GOLD, 12),
-                width=18,
+                fill=(*R_GOLD, 12), width=18,
             )
+    else:  # lesson — soft sage drifting dots
+        for k in range(9):
+            ph = k * 0.8
+            x = int(W * (0.12 + 0.09 * k) + 55 * math.sin(t * 0.45 + ph))
+            y = int(H * (0.35 + 0.05 * (k % 3)) + 40 * math.cos(t * 0.38 + ph * 0.7))
+            r = 22 + (k % 4) * 10
+            dr.ellipse([x - r, y - r, x + r, y + r], fill=(*R_SAGE_LIGHT, 14))
+            dr.ellipse([x - r // 2, y - r // 2, x + r // 2, y + r // 2], fill=(*R_SAGE, 10))
 
-    blur = 11 if style == "hindi" else 13
-    blur = max(4, int(round(blur * W / float(_PROD_W))))
+    blur = max(4, int(round(12 * W / float(_PROD_W))))
     return layer.filter(ImageFilter.GaussianBlur(radius=blur))
 
 
 def composite_peaceful_bg(img, t, style):
-    """Stack base image + soft motion (for shloka / arth / English sections)."""
     motion = peaceful_motion_layer(t, style)
     return Image.alpha_composite(img.convert("RGBA"), motion).convert("RGB")
 
 
-def rgba_overlay(img, draw_fn):
-    """Composite a small RGBA layer produced by draw_fn(layer, draw)."""
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw_fn(layer, ImageDraw.Draw(layer))
-    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
-
-
 def hud_footer(img, t):
-    """Minimal glass strip."""
+    """Minimal glass strip at bottom."""
     img = img.convert("RGBA")
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
@@ -338,11 +308,6 @@ def wrap_text(d, text, f, max_w, language=None):
 
 
 def wrap_devanagari(text, font_path, font_px, max_w):
-    """
-    Wrap Devanagari text using HarfBuzz when available.
-    PIL without Raqm over-measures Devanagari words by 15-35%, causing
-    wrong line breaks. Always use this for Sanskrit and Hindi.
-    """
     if dvs.is_available():
         return dvs.wrap_lines(text, font_path, font_px, max_w)
     f = font(font_px, False, devanagari=True)
@@ -350,38 +315,50 @@ def wrap_devanagari(text, font_path, font_px, max_w):
     return wrap_text(d_tmp, text, f, max_w)
 
 
-def cx_devanagari(text, font_path, font_px, w=None):
-    """
-    Compute centered x for Devanagari text using HarfBuzz shaped width.
-    PIL textbbox without Raqm gives ~15-35% too-large widths for Devanagari.
-    """
-    if w is None:
-        w = W
-    if dvs.is_available():
-        return (w - dvs.line_width_px(font_path, font_px, text)) // 2
-    f = font(font_px, False, devanagari=True)
-    d_tmp = ImageDraw.Draw(Image.new("RGB", (w + 100, 100)))
-    return cx(d_tmp, text, f)
-
-
 def line_reveal_alpha(t, total, n_lines, start=0.12, end=0.92):
-    """Per-line fade-in progress 0..1 for line index."""
+    """Per-line fade-in that stays fully visible once revealed (no fade-out)."""
     if n_lines <= 0:
         return []
-    p = smoothstep(prog(t, total * start, total * end))
+    # Each line gets a staggered start within [start*total .. end*total]
     out = []
     for i in range(n_lines):
-        gate = i / max(1, n_lines + 1)
-        li = clamp((p - gate) * (n_lines + 2))
-        out.append(smoothstep(li))
+        # line i starts revealing at start + i*(end-start)/(n_lines)
+        line_start = start + i * (end - start) / max(n_lines, 1)
+        line_end   = line_start + (end - start) / max(n_lines, 1) * 0.8
+        out.append(smoothstep(prog(t, total * line_start, total * line_end)))
     return out
 
 
+def draw_section_header(img, title, accent_rgb, t):
+    """Accent rule + section title."""
+    bar_a = int(115 + 85 * ease_io(prog(t, 0, 0.55)))
+    img = rgba_overlay(
+        img,
+        lambda layer, draw: draw.rectangle([48, 128, W - 48, 134], fill=(*accent_rgb, bar_a)),
+    )
+    fade = int(255 * smoothstep(prog(t, 0.05, 0.52)))
+    if fade < 1:
+        return img
+    d = ImageDraw.Draw(img)
+    # Pure Devanagari title
+    if any('\u0900' <= c <= '\u097F' for c in title):
+        hb_path = dvs.first_font_path(False) if dvs.is_available() else None
+        if hb_path and fade > 8:
+            return dvs.composite_line_centered(img, 148, title, hb_path, 32, R_INK, fade, canvas_w=W)
+        tf = font(32, False, devanagari=True)
+        return draw_text_alpha(img, (cx(d, title, tf, language="hi"), 148), title, tf, R_INK, fade)
+    # Pure Latin title
+    tf = font(32, True)
+    return draw_text_alpha(img, (cx(d, title, tf), 148), title, tf, R_INK, fade)
+
+
+# ── Section 1: Intro ──────────────────────────────────────────────────────────
+
 def frame_intro(t, shloka, day_number, total=3.0):
+    """Chapter/verse reveal with breathing rings."""
     img = base_canvas(t).convert("RGBA")
     arc_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ad = ImageDraw.Draw(arc_layer)
-    # Breathing concentric rings (soft watercolor-like)
     cx_, cy_ = W // 2, H // 2 - 40
     breath = 1.0 + 0.04 * breathe(t, amp=1.0, period=5.0)
     for i in range(5):
@@ -390,138 +367,100 @@ def frame_intro(t, shloka, day_number, total=3.0):
         a = max(10, 55 - i * 9)
         rot = t * 14 + i * 14
         bbox = [cx_ - r, cy_ - r, cx_ + r, cy_ + r]
-        ad.arc(
-            bbox,
-            start=int(rot) % 360,
-            end=int(rot) % 360 + 100,
-            fill=(*R_SAGE_LIGHT, min(a, 85)),
-            width=2,
-        )
-        ad.arc(
-            bbox,
-            start=int(rot + 130) % 360,
-            end=int(rot + 240) % 360,
-            fill=(*R_ROSE_LIGHT, min(a // 2 + 8, 45)),
-            width=1,
-        )
-    arc_layer = arc_layer.filter(
-        ImageFilter.GaussianBlur(radius=max(0.35, 1.2 * W / float(_PROD_W)))
-    )
+        ad.arc(bbox, start=int(rot) % 360, end=int(rot) % 360 + 100,
+               fill=(*R_SAGE_LIGHT, min(a, 85)), width=2)
+        ad.arc(bbox, start=int(rot + 130) % 360, end=int(rot + 240) % 360,
+               fill=(*R_ROSE_LIGHT, min(a // 2 + 8, 45)), width=1)
+    arc_layer = arc_layer.filter(ImageFilter.GaussianBlur(radius=max(1, int(round(1.2 * W / float(_PROD_W))))))
     img = Image.alpha_composite(img, arc_layer).convert("RGB")
     d = ImageDraw.Draw(img)
 
     p = ease_io(prog(t, 0.05, total * 0.95))
 
+    # "Bhagavad Gita" subtitle
     subtitle = "Bhagavad Gita"
     sf = font(36, False)
-    img = draw_text_alpha(
-        img,
-        (cx(d, subtitle, sf), int(H // 2 - 400 + 24 * (1 - p))),
-        subtitle,
-        sf,
-        R_SAGE,
-        int(220 * p),
-    )
+    img = draw_text_alpha(img, (cx(d, subtitle, sf), int(H // 2 - 400 + 24 * (1 - p))),
+                          subtitle, sf, R_SAGE, int(220 * p))
     d = ImageDraw.Draw(img)
 
-    ch_name = shloka.get("chapter_title", shloka.get("chapter_name", ""))
+    # Chapter title
+    ch_name = shloka.get("chapter_title", "")
     if ch_name:
         cf = font(30, False)
-        img = draw_text_alpha(
-            img,
-            (cx(d, ch_name, cf), int(H // 2 - 348 + 20 * (1 - p))),
-            ch_name,
-            cf,
-            R_INK_MUTED,
-            int(230 * smoothstep(prog(t, 0.15, total * 0.9))),
-        )
+        img = draw_text_alpha(img, (cx(d, ch_name, cf), int(H // 2 - 348 + 20 * (1 - p))),
+                              ch_name, cf, R_INK_MUTED,
+                              int(230 * smoothstep(prog(t, 0.15, total * 0.9))))
         d = ImageDraw.Draw(img)
 
+    # Chapter · Verse (large)
     cv_txt = f"Chapter {shloka['chapter']}  ·  Verse {shloka['verse']}"
     for fsize in [76, 64, 54]:
         cvf = font(fsize, True)
         if tw(d, cv_txt, cvf) <= W - 100:
             break
-    ty = int(H // 2 - 240 + 36 * (1 - p))
-    img = draw_text_alpha(img, (cx(d, cv_txt, cvf), ty), cv_txt, cvf, R_INK, int(255 * smoothstep(prog(t, 0.2, total * 0.85))))
+    img = draw_text_alpha(img, (cx(d, cv_txt, cvf), int(H // 2 - 240 + 36 * (1 - p))),
+                          cv_txt, cvf, R_INK,
+                          int(255 * smoothstep(prog(t, 0.2, total * 0.85))))
     d = ImageDraw.Draw(img)
 
-    # अध्याय X, श्लोक Y — Devanagari via HarfBuzz
+    # अध्याय X, श्लोक Y in Devanagari
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
     deva_txt = f"अध्याय {shloka['chapter']}, श्लोक {shloka['verse']}"
-    deva_fsize = 36
     deva_a = int(230 * smoothstep(prog(t, 0.25, total * 0.9)))
     if hb_path and deva_a > 8:
-        img = dvs.composite_line_centered(img, int(H // 2 - 168 + 14 * (1 - p)), deva_txt, hb_path, deva_fsize, R_GOLD, deva_a, canvas_w=W)
+        img = dvs.composite_line_centered(img, int(H // 2 - 168 + 14 * (1 - p)),
+                                          deva_txt, hb_path, 36, R_GOLD, deva_a, canvas_w=W)
     d = ImageDraw.Draw(img)
 
+    # Day counter
     day_txt = f"Day {day_number} of 700"
     df = font(32, False)
-    img = draw_text_alpha(
-        img,
-        (cx(d, day_txt, df), int(H // 2 - 120 + 16 * (1 - p))),
-        day_txt,
-        df,
-        R_GOLD,
-        int(240 * smoothstep(prog(t, 0.35, total))),
-    )
+    img = draw_text_alpha(img, (cx(d, day_txt, df), int(H // 2 - 100 + 16 * (1 - p))),
+                          day_txt, df, R_GOLD,
+                          int(240 * smoothstep(prog(t, 0.35, total))))
     d = ImageDraw.Draw(img)
 
+    # Thin gold divider
     dw = int((W - 200) * smoothstep(prog(t, 0.25, total * 0.75)))
     yl = H // 2 - 36
     if dw > 6:
-        la = int(200 * p)
-        img = rgba_overlay(
-            img,
-            lambda layer, draw: draw.rectangle(
-                [W // 2 - dw // 2, yl, W // 2 + dw // 2, yl + 2],
-                fill=(*R_GOLD_LIGHT, la),
-            ),
-        )
+        img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
+            [W // 2 - dw // 2, yl, W // 2 + dw // 2, yl + 2], fill=(*R_GOLD_LIGHT, int(200 * p))))
         d = ImageDraw.Draw(img)
 
     return hud_footer(img, t)
 
 
-def draw_section_header(img, title, accent_rgb, t):
-    """Accent rule + title inside existing content card."""
-    bar_a = int(115 + 85 * ease_io(prog(t, 0, 0.55)))
-    img = rgba_overlay(
-        img,
-        lambda layer, draw: draw.rectangle(
-            [48, 128, W - 48, 134], fill=(*accent_rgb, bar_a)
-        ),
-    )
-    d = ImageDraw.Draw(img)
-    tf = font(32, True)
-    fade = int(255 * smoothstep(prog(t, 0.05, 0.52)))
-    return draw_text_alpha(img, (cx(d, title, tf), 148), title, tf, R_INK, fade)
-
+# ── Section 2: Sanskrit Shloka ───────────────────────────────────────────────
 
 def frame_sanskrit(t, shloka, total=5.0):
-    img = composite_peaceful_bg(base_canvas(t), t, "sanskrit")
+    """Sanskrit shloka with line-by-line reveal."""
+    img = composite_peaceful_bg(base_canvas(t), t, "lesson")  # sage dots motion
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=218)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Shloka", R_SAGE, t)
     d = ImageDraw.Draw(img)
 
-    sanskrit = shloka["sanskrit"]
+    sanskrit = shloka.get("sanskrit", "")
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
-    for fsize in [54, 48, 42, 36]:
-        sf = font(fsize, False, devanagari=True, hindi_prose=False)
-        lines = wrap_devanagari(sanskrit, hb_path or "", fsize, W - 120) if hb_path else wrap_text(d, sanskrit, sf, W - 120, language="sa")
-        if len(lines) * (fsize + 22) <= 560:
+    for fsize in [54, 48, 42, 36, 32]:
+        sf = font(fsize, False, devanagari=True)
+        lines = wrap_devanagari(sanskrit, hb_path or "", fsize, W - 120) if hb_path else \
+                wrap_text(d, sanskrit, sf, W - 120, language="sa")
+        if len(lines) * (fsize + 22) <= 580:
             break
 
     n = len(lines)
     alphas = line_reveal_alpha(t, total, n, start=0.08, end=0.88)
-    lh = sf.size + 22
+    lh = fsize + 22
     block_h = n * lh
     sy = int(H // 2 - block_h // 2 - 20 + 8 * breathe(t, 0.2, 0.5, 6.0))
 
     for i, line in enumerate(lines):
         a = int(255 * alphas[i]) if i < len(alphas) else 0
         if a < 8:
+            sy += lh
             continue
         rgb = tuple(int(lerp(R_INK[j], R_SAGE[j], 0.22)) for j in range(3))
         if hb_path:
@@ -532,90 +471,84 @@ def frame_sanskrit(t, shloka, total=5.0):
         d = ImageDraw.Draw(img)
         sy += lh
 
-    # Transliteration: gentle fade after main lines visible
-    if n > 0 and all(a > 0.92 for a in alphas):
-        p_trans = ease_io(prog(t, total * 0.58, total))
-        trans = shloka.get("transliteration", "")
-        tf = font(24, False)
-        ty = sy + 12
-        for line in wrap_text(d, trans, tf, W - 120)[:3]:
-            img = draw_text_alpha(img, (cx(d, line, tf), ty), line, tf, R_INK_MUTED, int(210 * p_trans))
-            d = ImageDraw.Draw(img)
-            ty += 34
-
     return hud_footer(img, t)
 
 
-def frame_vyakhya(t, shloka, total=6.0, bridge_sec=0.0):
-    """Hindi meaning frame — shows shloka['hindi'] key.
-    bridge_sec: duration of bridge voice that plays before text should appear.
-    """
+# ── Section 3: Hindi Explanation ─────────────────────────────────────────────
+
+def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
+    """Hindi explanation from hindi_explanation field."""
     img = composite_peaceful_bg(base_canvas(t), t, "hindi")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=222)
     d = ImageDraw.Draw(img)
-    img = draw_section_header(img, "Arth  ·  Hindi Meaning", R_ROSE, t)
+    img = draw_section_header(img, "हिंदी व्याख्या", R_ROSE, t)
     d = ImageDraw.Draw(img)
 
-    hindi = shloka.get("hindi", "")
-
+    hindi = shloka.get("hindi_explanation", "")
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
-    for fsize in [44, 40, 36, 32]:
-        lines = wrap_devanagari(hindi, hb_path or "", fsize, W - 120) if hb_path else wrap_text(
-            d, hindi, font(fsize, False, devanagari=True), W - 120, language="hi"
-        )
-        if len(lines) * (fsize + 20) <= 680:
+    for fsize in [40, 36, 32, 28]:
+        lines = wrap_devanagari(hindi, hb_path or "", fsize, W - 120) if hb_path else \
+                wrap_text(d, hindi, font(fsize, False, devanagari=True), W - 120, language="hi")
+        if len(lines) * (fsize + 20) <= 700:
             break
 
     n = len(lines)
-    # Text starts only after bridge voice finishes + small buffer
-    text_start = min(0.85, (bridge_sec + 0.3) / max(total, 1.0))
-    alphas = line_reveal_alpha(t, total, n, start=text_start, end=0.95)
+    # All lines appear together the moment bridge voice ends, then stay visible
+    text_start_frac = min(0.95, bridge_sec / max(total, 1.0))
+    reveal_end_frac = min(0.99, text_start_frac + 0.15)
     lh = fsize + 20
     block_h = n * lh
     vy = int(H // 2 - block_h // 2 + 6 * breathe(t, 0.4, 0.45, 5.5))
 
-    for i, line in enumerate(lines):
-        a = int(255 * alphas[i]) if i < len(alphas) else 0
+    for line in lines:
+        a = int(255 * smoothstep(prog(t, total * text_start_frac, total * reveal_end_frac)))
         if a < 8:
+            vy += lh
             continue
         rgb = tuple(int(lerp(R_INK[j], R_ROSE[j], 0.15)) for j in range(3))
         if hb_path:
             img = dvs.composite_line_centered(img, vy, line, hb_path, fsize, rgb, a, canvas_w=W)
         else:
             hf = font(fsize, False, devanagari=True)
-            img = draw_text_alpha(img, (cx(d, line, hf, language="hi"), vy), line, hf, rgb, a, language="hi")
+            img = draw_text_alpha(img, (cx(d, line, hf, language="hi"), vy),
+                                  line, hf, rgb, a, language="hi")
         d = ImageDraw.Draw(img)
         vy += lh
 
     return hud_footer(img, t)
 
 
+# ── Section 3: English Explanation ───────────────────────────────────────────
 
-
-def frame_english(t, shloka, total=5.0):
+def frame_english(t, shloka, total=6.0, bridge_sec=0.0):
+    """English explanation from english_explanation field."""
     img = composite_peaceful_bg(base_canvas(t), t, "english")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=218)
     d = ImageDraw.Draw(img)
-    img = draw_section_header(img, "Meaning (English)", R_GOLD, t)
+    img = draw_section_header(img, "English Explanation", R_GOLD, t)
     d = ImageDraw.Draw(img)
 
-    english = shloka.get("english", "")
-    for fsize in [44, 38, 34, 30]:
+    english = shloka.get("english_explanation", "")
+    for fsize in [42, 38, 34, 30]:
         lf = font(fsize, False)
         lines = wrap_text(d, english, lf, W - 120)
         if len(lines) * (fsize + 20) <= 720:
             break
 
     n = len(lines)
-    # start=0.35 — text waits for bridge voice to finish before appearing
-    alphas = line_reveal_alpha(t, total, n, start=0.35, end=0.95)
+    # All lines appear together the moment bridge voice ends, then stay visible
+    text_start_sec = bridge_sec          # absolute seconds when bridge finishes
+    text_start_frac = min(0.95, text_start_sec / max(total, 1.0))
+    reveal_end_frac = min(0.99, text_start_frac + 0.15)  # fast 0.15-fraction fade-in
     lh = lf.size + 20
     block_h = n * lh
     ly = int(H // 2 - block_h // 2 + 6 * breathe(t, 0.6, 0.5, 6.2))
 
-    for i, line in enumerate(lines):
-        a = int(255 * alphas[i]) if i < len(alphas) else 0
+    for line in lines:
+        # Single shared alpha — all lines fade in together
+        a = int(255 * smoothstep(prog(t, total * text_start_frac, total * reveal_end_frac)))
         if a < 8:
+            ly += lh
             continue
         img = draw_text_alpha(img, (cx(d, line, lf), ly), line, lf, R_INK, a)
         d = ImageDraw.Draw(img)
@@ -624,111 +557,165 @@ def frame_english(t, shloka, total=5.0):
     return hud_footer(img, t)
 
 
-def frame_outro(t, total=2.0):
-    img = base_canvas(t)
-    p = ease_io(prog(t, 0.05, total * 0.92))
+# ── Section 4: Life Lesson (Hindi + English in one frame) ────────────────────
 
-    # Soft center bloom
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od = ImageDraw.Draw(ov)
-    br = int(320 + 40 * math.sin(t * 1.1))
-    od.ellipse([W // 2 - br, H // 2 - 260 - br, W // 2 + br, H // 2 - 260 + br], fill=(*R_ROSE_LIGHT, int(50 * p)))
-    img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
+def frame_lesson(t, shloka, total=6.0, bridge_sec=0.0, lesson_hi_dur=0.0):
+    """
+    Single frame showing both life_lesson_hindi and life_lesson_english.
+    Text reveal is synced to audio: Hindi appears after bridge ends,
+    English appears after Hindi lesson voice ends.
+    """
+    img = composite_peaceful_bg(base_canvas(t), t, "lesson")
+    img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=225)
+    d = ImageDraw.Draw(img)
+    img = draw_section_header(img, "Life Lesson", R_SAGE, t)
     d = ImageDraw.Draw(img)
 
-    nf = font(82, True)
-    name_y = int(H // 2 - 240 + 20 * (1 - p))
-    img = draw_text_alpha(img, (cx(d, PAGE_NAME, nf), name_y), PAGE_NAME, nf, R_INK, int(255 * p))
-    d = ImageDraw.Draw(img)
+    hindi_lesson   = shloka.get("life_lesson_hindi", "")
+    english_lesson = shloka.get("life_lesson_english", "")
+    hb_path = dvs.first_font_path(False) if dvs.is_available() else None
 
-    # Jai Shree Krishna in Devanagari via HarfBuzz
-    hb_path = dvs.first_font_path(True) if dvs.is_available() else None
-    jai_deva = "जय श्री कृष्ण"
-    jai_fsize = 52
-    jai_a = int(255 * smoothstep(prog(t, 0.15, total * 0.85)))
-    if hb_path and jai_a > 8:
-        img = dvs.composite_line_centered(img, int(H // 2 - 148 + 12 * (1 - p)), jai_deva, hb_path, jai_fsize, R_GOLD, jai_a, canvas_w=W)
-    else:
-        jf = font(44, True)
-        img = draw_text_alpha(img, (cx(d, "Jai Shree Krishna", jf), int(H // 2 - 148 + 12 * (1 - p))), "Jai Shree Krishna", jf, R_GOLD, jai_a)
-    d = ImageDraw.Draw(img)
+    # ── Hindi lesson ──────────────────────────────────────────
+    for h_fsize in [46, 42, 38, 34]:
+        h_lines = wrap_devanagari(hindi_lesson, hb_path or "", h_fsize, W - 120) if hb_path else \
+                  wrap_text(d, hindi_lesson, font(h_fsize, False, devanagari=True), W - 120, language="hi")
+        if len(h_lines) * (h_fsize + 18) <= 340:
+            break
 
-    hf = font(32, False)
-    img = draw_text_alpha(
-        img,
-        (cx(d, PAGE_HANDLE, hf), int(H // 2 - 130 + 14 * (1 - p))),
-        PAGE_HANDLE,
-        hf,
-        R_INK_MUTED,
-        int(240 * smoothstep(prog(t, 0.2, total))),
-    )
-    d = ImageDraw.Draw(img)
+    # ── English lesson ────────────────────────────────────────
+    for e_fsize in [38, 34, 30, 26]:
+        ef = font(e_fsize, False)
+        e_lines = wrap_text(d, english_lesson, ef, W - 120)
+        if len(e_lines) * (e_fsize + 18) <= 280:
+            break
 
-    l1, l2 = "Follow for daily", "Gita wisdom & shlokas"
-    for i, line in enumerate([l1, l2]):
-        cf = font(40, i == 1)
-        py = int(H // 2 - 20 + i * 62 + 6 * breathe(t, i * 0.3, 0.4, 5.0))
-        fa = int(235 * smoothstep(prog(t, 0.25 + i * 0.08, total * 0.95)))
-        img = draw_text_alpha(img, (cx(d, line, cf), py), line, cf, R_INK if i == 0 else R_SAGE, fa)
+    h_block = len(h_lines) * (h_fsize + 18)
+    e_block = len(e_lines) * (e_fsize + 18)
+    sep_gap = 48
+    total_block = h_block + sep_gap + e_block
+    start_y = int(H // 2 - total_block // 2 + 6 * breathe(t, 0.3, 0.4, 5.8))
+
+    # Hindi text appears right after bridge ends
+    h_start_sec = bridge_sec
+    h_start = min(0.95, h_start_sec / max(total, 1.0))
+    h_end   = min(0.99, h_start + 0.12)
+    hy = start_y
+    for line in h_lines:
+        a = int(255 * smoothstep(prog(t, total * h_start, total * h_end)))
+        if a < 8:
+            hy += h_fsize + 18
+            continue
+        rgb = tuple(int(lerp(R_INK[j], R_ROSE[j], 0.2)) for j in range(3))
+        if hb_path:
+            img = dvs.composite_line_centered(img, hy, line, hb_path, h_fsize, rgb, a, canvas_w=W)
+        else:
+            hf = font(h_fsize, False, devanagari=True)
+            img = draw_text_alpha(img, (cx(d, line, hf, language="hi"), hy),
+                                  line, hf, rgb, a, language="hi")
+        d = ImageDraw.Draw(img)
+        hy += h_fsize + 18
+
+    # Separator line
+    sep_y = hy + 14
+    sep_a = int(160 * smoothstep(prog(t, total * h_end, total * min(0.99, h_end + 0.08))))
+    if sep_a > 8:
+        img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
+            [80, sep_y, W - 80, sep_y + 2], fill=(*R_GOLD_LIGHT, sep_a)))
         d = ImageDraw.Draw(img)
 
-    bw, bh = 400, 76
-    bx, by = W // 2 - bw // 2, int(H // 2 + 200)
-    pill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    pd = ImageDraw.Draw(pill)
-    show = smoothstep(prog(t, 0.35, total))
-    pd.rounded_rectangle([bx, by, bx + bw, by + bh], radius=40, fill=(*R_SAGE, int(230 * show)))
-    img = Image.alpha_composite(img.convert("RGBA"), pill).convert("RGB")
-    d = ImageDraw.Draw(img)
-    cta = "Follow now"
-    ctf = font(28, True)
-    img = draw_text_soft(
-        img,
-        (bx + (bw - tw(d, cta, ctf)) // 2, by + 22),
-        cta,
-        ctf,
-        (255, 255, 255),
-        shadow=(60, 90, 75),
-    )
+    # English lines — appear after Hindi lesson voice finishes
+    e_start_sec = bridge_sec + lesson_hi_dur + 0.15
+    e_start = min(0.97, e_start_sec / max(total, 1.0))
+    e_end   = min(0.99, e_start + 0.12)
+    ey = sep_y + sep_gap - 14
+    for line in e_lines:
+        a = int(255 * smoothstep(prog(t, total * e_start, total * e_end)))
+        if a < 8:
+            ey += e_fsize + 18
+            continue
+        img = draw_text_alpha(img, (cx(d, line, ef), ey), line, ef, R_INK_MUTED, a)
+        d = ImageDraw.Draw(img)
+        ey += e_fsize + 18
 
     return hud_footer(img, t)
 
 
-def pick_background_track(bot_dir):
+# ── Section 5: Outro ──────────────────────────────────────────────────────────
+
+def frame_outro(t, total=5.0):
     """
-    Prefer spiritual.mp3 (or any *spiritual* audio).
-    Searches: gita-daily-bot/music/ first, then gita-daily-bot/ (same folder as reel_gen.py).
+    5s outro:
+      0.0–2.0s : Jai Shree Krishna (with voice) — brand name + Devanagari
+      2.0–5.0s : Follow CTA fades in — handle, CTA lines, pill
     """
-    audio_ext = (".mp3", ".wav", ".m4a")
+    img = base_canvas(t)
 
-    def scan_dir(d):
-        if not os.path.isdir(d):
-            return None
-        try:
-            names = [f for f in os.listdir(d) if f.lower().endswith(audio_ext)]
-        except OSError:
-            return None
-        if not names:
-            return None
-        lower_map = {n.lower(): n for n in names}
-        if "spiritual.mp3" in lower_map:
-            return os.path.join(d, lower_map["spiritual.mp3"])
-        for n in names:
-            if "spiritual" in n.lower():
-                return os.path.join(d, n)
-        return os.path.join(d, sorted(names, key=str.lower)[0])
+    # Soft bloom
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+    br = int(300 + 30 * math.sin(t * 1.1))
+    od.ellipse([W // 2 - br, H // 2 - 260 - br, W // 2 + br, H // 2 - 260 + br],
+               fill=(*R_ROSE_LIGHT, int(55 * ease_io(prog(t, 0.0, 0.4)))))
+    img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
+    d = ImageDraw.Draw(img)
 
-    music_dir = os.path.join(bot_dir, MUSIC_DIR)
-    hit = scan_dir(music_dir)
-    if hit:
-        return hit
-    return scan_dir(bot_dir)
+    # ── Phase 1: Brand + Jai Shree Krishna (0–2s, stays visible whole outro) ──
+    jai_p = smoothstep(prog(t, 0.05, 0.4))   # fast fade-in
 
+    nf = font(82, True)
+    img = draw_text_alpha(img, (cx(d, PAGE_NAME, nf), H // 2 - 260),
+                          PAGE_NAME, nf, R_INK, int(255 * jai_p))
+    d = ImageDraw.Draw(img)
+
+    hb_path = dvs.first_font_path(True) if dvs.is_available() else None
+    jai_deva = "जय श्री कृष्ण"
+    jai_a = int(255 * jai_p)
+    if hb_path and jai_a > 8:
+        img = dvs.composite_line_centered(img, H // 2 - 160,
+                                          jai_deva, hb_path, 56, R_GOLD, jai_a, canvas_w=W)
+    else:
+        jf = font(48, True)
+        img = draw_text_alpha(img, (cx(d, "Jai Shree Krishna", jf), H // 2 - 160),
+                              "Jai Shree Krishna", jf, R_GOLD, jai_a)
+    d = ImageDraw.Draw(img)
+
+    # ── Phase 2: CTA fades in after 2s ────────────────────────────────────────
+    cta_p = smoothstep(prog(t, 2.0, 3.0))   # fades in between 2s–3s
+
+    hf = font(32, False)
+    img = draw_text_alpha(img, (cx(d, PAGE_HANDLE, hf), H // 2 - 60),
+                          PAGE_HANDLE, hf, R_INK_MUTED, int(240 * cta_p))
+    d = ImageDraw.Draw(img)
+
+    for i, (line, col) in enumerate([("Follow for daily", R_INK), ("Gita wisdom & shlokas", R_SAGE)]):
+        cf = font(40, i == 1)
+        py = H // 2 + 20 + i * 62
+        img = draw_text_alpha(img, (cx(d, line, cf), py), line, cf, col, int(235 * cta_p))
+        d = ImageDraw.Draw(img)
+
+    # Follow pill
+    bw, bh = 400, 76
+    bx, by = W // 2 - bw // 2, H // 2 + 180
+    pill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(pill)
+    pd.rounded_rectangle([bx, by, bx + bw, by + bh], radius=40,
+                         fill=(*R_SAGE, int(230 * cta_p)))
+    img = Image.alpha_composite(img.convert("RGBA"), pill).convert("RGB")
+    d = ImageDraw.Draw(img)
+    if cta_p > 0.1:
+        ctf = font(28, True)
+        cta = "Follow now"
+        img = draw_text_soft(img, (bx + (bw - tw(d, cta, ctf)) // 2, by + 22),
+                             cta, ctf, (255, 255, 255), shadow=(60, 90, 75))
+
+    return hud_footer(img, t)
+
+
+# ── TTS helpers ───────────────────────────────────────────────────────────────
 
 def generate_tts(text, lang, output_path, rate=None, pitch="-5Hz"):
     """Neural TTS via Microsoft Edge — hi-IN-MadhurNeural for all sections."""
     import re
-
     text = re.sub(r"^[\d\.\s।|]+", "", text).strip()
     text = text[:300]
     if not text:
@@ -736,7 +723,6 @@ def generate_tts(text, lang, output_path, rate=None, pitch="-5Hz"):
 
     voice = "hi-IN-MadhurNeural"
     if rate is None:
-        # English slightly faster, Hindi/Sanskrit calmer
         rate = "-10%" if lang == "en" else "-18%"
 
     try:
@@ -761,23 +747,49 @@ def generate_tts(text, lang, output_path, rate=None, pitch="-5Hz"):
             return None
 
 
-def _build_vyakhya_tts(shloka):
-    """TTS text for vyakhya frame — uses hindi key."""
-    return shloka.get("hindi", "")[:250]
+def pick_background_track(bot_dir):
+    audio_ext = (".mp3", ".wav", ".m4a")
 
+    def scan_dir(d):
+        if not os.path.isdir(d):
+            return None
+        try:
+            names = [f for f in os.listdir(d) if f.lower().endswith(audio_ext)]
+        except OSError:
+            return None
+        if not names:
+            return None
+        lower_map = {n.lower(): n for n in names}
+        if "spiritual.mp3" in lower_map:
+            return os.path.join(d, lower_map["spiritual.mp3"])
+        for n in names:
+            if "spiritual" in n.lower():
+                return os.path.join(d, n)
+        return os.path.join(d, sorted(names, key=str.lower)[0])
+
+    hit = scan_dir(os.path.join(bot_dir, MUSIC_DIR))
+    return hit or scan_dir(bot_dir)
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
     """
-    Generate shloka reel from gita_v8.json data.
+    Generate shloka reel from gita_data.json entry.
 
     Flow:
-      intro  →  sanskrit  →  vyakhya (hindi)  →  english  →  outro
+      intro  →  hindi_explanation  →  english_explanation  →  life_lesson  →  outro
 
-    Bridge voices:
-      after sanskrit : "Aayiye, iss shloka ko Hindi mein samajhte hain."
-      after vyakhya  : "Now let's understand this shloka in English."
-
-    fast_preview: 540x960 @ 16fps for quick local testing.
+    TTS voices:
+      intro        : "Geeta ka gyaan..." hook + "adhyay X, shlok Y"
+      bridge_hindi : "Aayiye, iss shloka ki Hindi vyakhya samajhte hain."
+      hindi        : hindi_explanation
+      bridge_en    : "Now let's understand this in English."
+      english      : english_explanation
+      bridge_lesson: "Aur iska jeevan sandesh hai..."
+      lesson_hi    : life_lesson_hindi
+      lesson_en    : life_lesson_english (English TTS)
+      jai          : "Jai Shree Krishna"
     """
     global W, H, FPS
     _saved_dims = (W, H, FPS)
@@ -789,14 +801,16 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
         enc_crf_list = ["-crf", "32"]
         print("  [FAST PREVIEW] 540x960 @ 16fps, ultrafast encode")
     try:
-        print(f"  Shloka: BG {shloka['chapter']}.{shloka['verse']}")
+        ch, v = shloka["chapter"], shloka["verse"]
+        print(f"  Shloka: BG {ch}.{v}")
 
         DURATIONS = {
-            "intro":   10.0,
-            "sanskrit": 6.0,
-            "vyakhya":  7.0,
-            "english":  6.0,
-            "outro":    3.0,
+            "intro":    10.0,
+            "sanskrit":  6.0,
+            "hindi":     7.0,
+            "english":   6.0,
+            "lesson":    6.0,
+            "outro":     3.0,
         }
 
         def make_clip(fn, dur, **kw):
@@ -819,10 +833,10 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
                 return (fa * (1.0 - alpha) + fb * alpha).astype(np.uint8)
             return VC(mf, duration=total).with_fps(FPS)
 
+        # ── TTS generation ────────────────────────────────────────────────────
         print("  Generating TTS...")
         tts_dir = os.path.join(os.path.dirname(os.path.abspath(output_path)), "tts")
         os.makedirs(tts_dir, exist_ok=True)
-        ch, v = shloka["chapter"], shloka["verse"]
 
         tts_files = {
             "intro": generate_tts(
@@ -835,27 +849,37 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
                 "hi", os.path.join(tts_dir, "tts_chapter_verse.mp3"), rate="-15%"
             ),
             "sanskrit": generate_tts(
-                shloka["sanskrit"].replace("\n", " "),
+                shloka.get("sanskrit", "").replace("\n", " "),
                 "hi", os.path.join(tts_dir, "tts_sanskrit.mp3"), rate="-22%"
             ),
             "bridge_hindi": generate_tts(
-                "Aayiye, iss shloka ko Hindi mein samajhte hain.",
-                "hi", os.path.join(tts_dir, "tts_bridge_hindi.mp3"), rate="-10%"
+                "Aayiye, iss shloka ki Hindi vyakhya samajhte hain.",
+                "hi", os.path.join(tts_dir, "tts_bridge_hindi.mp3"), rate="-5%"
             ),
-            "vyakhya": generate_tts(
-                _build_vyakhya_tts(shloka),
-                "hi", os.path.join(tts_dir, "tts_vyakhya.mp3"), rate="-16%"
+            "hindi": generate_tts(
+                shloka.get("hindi_explanation", ""),
+                "hi", os.path.join(tts_dir, "tts_hindi.mp3"), rate="-16%"
             ),
             "bridge_english": generate_tts(
-                "Now let's understand this shloka in English.",
+                "Now let's understand this in English.",
                 "en", os.path.join(tts_dir, "tts_bridge_english.mp3"), rate="+5%"
             ),
             "english": generate_tts(
-                shloka.get("english", ""),
+                shloka.get("english_explanation", ""),
                 "en", os.path.join(tts_dir, "tts_english.mp3"), rate="+5%"
             ),
-            "bridge_lesson": None,
-            "lesson": None,
+            "bridge_lesson": generate_tts(
+                "Is shloka se hame ye sikhna chahiye ki",
+                "hi", os.path.join(tts_dir, "tts_bridge_lesson.mp3"), rate="-5%"
+            ),
+            "lesson_hi": generate_tts(
+                shloka.get("life_lesson_hindi", ""),
+                "hi", os.path.join(tts_dir, "tts_lesson_hi.mp3"), rate="-18%"
+            ),
+            "lesson_en": generate_tts(
+                shloka.get("life_lesson_english", ""),
+                "en", os.path.join(tts_dir, "tts_lesson_en.mp3"), rate="+5%"
+            ),
             "jai": generate_tts(
                 "Jai Shree Krishna",
                 "hi", os.path.join(tts_dir, "tts_jai.mp3"), rate="-20%"
@@ -874,42 +898,48 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
                     pass
             return 0.0
 
-        # Intro: hook + 0.4s gap + chapter/verse + 2s breathing room
+        # Intro: hook + 0.4s + chapter/verse + 2s breathing room
         intro_tts = _dur("intro") + 0.4 + _dur("chapter_verse")
         actual["intro"] = max(8.5, intro_tts + 2.0)
         print(f"  TTS intro: {intro_tts:.1f}s → {actual['intro']:.1f}s")
 
-        # Sanskrit: shloka reading + 1s tail
+        # Sanskrit: shloka reading + 0.3s tail (bridge_hindi starts right after)
         san = _dur("sanskrit")
-        actual["sanskrit"] = max(DURATIONS["sanskrit"], san + 1.0)
+        actual["sanskrit"] = max(DURATIONS["sanskrit"], san + 0.3)
         print(f"  TTS sanskrit: {san:.1f}s → {actual['sanskrit']:.1f}s")
 
-        # Vyakhya: bridge_hindi plays first, then hindi translation
+        # Hindi: bridge + 0.15s + explanation + 0.5s tail
         bh = _dur("bridge_hindi")
-        vy = _dur("vyakhya")
-        # Add 0.5s gap between bridge and content, plus 1.2s tail
-        actual["vyakhya"] = max(DURATIONS["vyakhya"], bh + 0.5 + vy + 1.2)
-        print(f"  TTS vyakhya: bridge({bh:.1f}s) + hindi({vy:.1f}s) → {actual['vyakhya']:.1f}s")
+        hi = _dur("hindi")
+        actual["hindi"] = max(bh + 0.15 + hi + 0.5, 4.0)
+        print(f"  TTS hindi: bridge({bh:.1f}s) + explanation({hi:.1f}s) → {actual['hindi']:.1f}s")
 
-        # English: bridge_english plays first, then translation
-        # Add enough tail so outro doesn't start before english finishes
+        # English: bridge + 0.15s + explanation + 1.5s tail
         be = _dur("bridge_english")
         en = _dur("english")
-        actual["english"] = max(DURATIONS["english"], be + 0.4 + en + 2.5)
-        print(f"  TTS english: bridge({be:.1f}s) + translation({en:.1f}s) → {actual['english']:.1f}s")
+        actual["english"] = max(be + 0.15 + en + 1.5, 4.0)
+        print(f"  TTS english: bridge({be:.1f}s) + explanation({en:.1f}s) → {actual['english']:.1f}s")
 
-        # Outro: sized to fit Jai Shree Krishna
+        # Lesson: bridge + 0.15s + hindi lesson + 0.15s + english lesson + 4.0s tail
+        bl = _dur("bridge_lesson")
+        lh_dur = _dur("lesson_hi")
+        le_dur = _dur("lesson_en")
+        actual["lesson"] = max(bl + 0.15 + lh_dur + 0.15 + le_dur + 4.0, 4.0)
+        print(f"  TTS lesson: bridge({bl:.1f}s) + hi({lh_dur:.1f}s) + en({le_dur:.1f}s) → {actual['lesson']:.1f}s")
+
+        # Outro: fixed 5s, jai fires at start
         jai = _dur("jai")
-        actual["outro"] = max(3.0, jai + 1.5)
+        actual["outro"] = 5.0
         print(f"  TTS jai: {jai:.1f}s → outro {actual['outro']:.1f}s")
 
         # ── Video clips ───────────────────────────────────────────────────────
         print("  Rendering video sections...")
         clips = [
-            make_clip(frame_intro,    actual["intro"],   shloka=shloka, day_number=day_number, total=actual["intro"]),
+            make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"]),
             make_clip(frame_sanskrit, actual["sanskrit"], shloka=shloka, total=actual["sanskrit"]),
-            make_clip(frame_vyakhya,  actual["vyakhya"],  shloka=shloka, total=actual["vyakhya"], bridge_sec=bh + 0.5),
-            make_clip(frame_english,  actual["english"],  shloka=shloka, total=actual["english"]),
+            make_clip(frame_hindi,    actual["hindi"],    shloka=shloka, total=actual["hindi"],   bridge_sec=bh + 0.15),
+            make_clip(frame_english,  actual["english"],  shloka=shloka, total=actual["english"], bridge_sec=be + 0.15 + FADE),
+            make_clip(frame_lesson,   actual["lesson"],   shloka=shloka, total=actual["lesson"], bridge_sec=bl + 0.15 + 1.05 + 1.0, lesson_hi_dur=lh_dur),
             make_clip(frame_outro,    actual["outro"],    total=actual["outro"]),
         ]
 
@@ -938,7 +968,6 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
             return None
 
         def build_section(parts, total_sec):
-            """parts = list of (tts_key_or_None, gap_after_secs). Pads to total_sec."""
             clips_list = []
             used = 0.0
             for key, gap in parts:
@@ -956,18 +985,16 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
         audio_parts = [
             # Intro: hook → 0.4s → chapter/verse → pad
             build_section([("intro", 0.4), ("chapter_verse", 0.0)], actual["intro"]),
-
             # Sanskrit: shloka reading → pad
             build_section([("sanskrit", 0.0)], actual["sanskrit"]),
-
-            # Vyakhya: bridge_hindi → 0.4s → hindi → pad
-            build_section([("bridge_hindi", 0.4), ("vyakhya", 0.0)], actual["vyakhya"]),
-
-            # English: bridge_english → 0.4s → translation → pad
-            build_section([("bridge_english", 0.4), ("english", 0.0)], actual["english"]),
-
-            # Outro: 0.15s silence → Jai Shree Krishna early → pad
-            build_section([(None, 0.15), ("jai", 0.0)], actual["outro"]),
+            # Hindi: bridge → 0.15s → explanation → pad
+            build_section([("bridge_hindi", 0.15), ("hindi", 0.0)], actual["hindi"]),
+            # English: bridge → 0.15s → explanation → pad (0.5s tail built into actual["english"])
+            build_section([("bridge_english", 0.15), ("english", 0.0)], actual["english"]),
+            # Lesson: bridge → 0.15s → hindi lesson → 0.15s → english lesson → pad
+            build_section([("bridge_lesson", 0.15), ("lesson_hi", 0.15), ("lesson_en", 0.0)], actual["lesson"]),
+            # Outro: Jai Shree Krishna fires immediately, CTA is visual only
+            build_section([("jai", 0.0)], actual["outro"]),
         ]
 
         tts_audio = concatenate_audioclips(audio_parts)
