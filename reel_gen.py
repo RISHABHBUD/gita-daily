@@ -215,6 +215,116 @@ def rgba_overlay(img, draw_fn):
     return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
 
+def draw_om_bg(img, t, alpha_max=28):
+    """Faint pulsing ॐ symbol — drawn behind card for background layer."""
+    hb_path = dvs.first_font_path(True) if dvs.is_available() else None
+    pulse = alpha_max + int(8 * math.sin(t * 0.7))
+    om_text = "ॐ"
+    om_size = 420
+    if hb_path:
+        try:
+            from font_helper import truetype_compat
+            om_font = truetype_compat(hb_path, om_size)
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            od = ImageDraw.Draw(ov)
+            tkw = raqm_text_kwargs(language="hi")
+            bb = od.textbbox((0, 0), om_text, font=om_font, **tkw)
+            ox = (W - (bb[2] - bb[0])) // 2 - bb[0]
+            oy = (H - (bb[3] - bb[1])) // 2 - bb[1] - 60
+            od.text((ox, oy), om_text, font=om_font, fill=(*R_GOLD, pulse), **tkw)
+            blurred = ov.filter(ImageFilter.GaussianBlur(radius=6))
+            return Image.alpha_composite(img.convert("RGBA"), blurred).convert("RGB")
+        except Exception:
+            pass
+    return img
+
+
+def draw_om_on_card(img, t, alpha_max=32):
+    """
+    Animated ॐ drawn ON the card — slow rotation via crop+paste trick,
+    pulsing alpha, and a soft gold glow ring underneath.
+    Placed at card center so it sits behind text but above the card surface.
+    """
+    hb_path = dvs.first_font_path(True) if dvs.is_available() else None
+    om_text = "ॐ"
+    om_size = 380
+
+    # Pulse: breathe between alpha_max-10 and alpha_max+10
+    pulse_a = int(alpha_max + 10 * math.sin(t * 0.65))
+
+    # Glow ring — slow breathe radius
+    glow_r = int(160 + 18 * math.sin(t * 0.5))
+    glow_a = int(18 + 8 * math.sin(t * 0.5))
+    cx_ = W // 2
+    cy_ = H // 2 - 40
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse([cx_ - glow_r, cy_ - glow_r, cx_ + glow_r, cy_ + glow_r],
+               fill=(*R_GOLD, glow_a))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=40))
+    img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
+
+    if not hb_path:
+        return img
+    try:
+        from font_helper import truetype_compat
+        om_font = truetype_compat(hb_path, om_size)
+        # Render Om onto a square canvas
+        pad = 60
+        tmp = Image.new("RGBA", (om_size + pad * 2, om_size + pad * 2), (0, 0, 0, 0))
+        td = ImageDraw.Draw(tmp)
+        tkw = raqm_text_kwargs(language="hi")
+        bb = td.textbbox((0, 0), om_text, font=om_font, **tkw)
+        tx = pad + (om_size - (bb[2] - bb[0])) // 2 - bb[0]
+        ty = pad + (om_size - (bb[3] - bb[1])) // 2 - bb[1]
+        td.text((tx, ty), om_text, font=om_font, fill=(*R_GOLD, pulse_a), **tkw)
+        tmp = tmp.filter(ImageFilter.GaussianBlur(radius=3))
+
+        # Slow rotation — one full turn every 30s
+        angle = (t * 360 / 30) % 360
+        rotated = tmp.rotate(angle, resample=Image.BICUBIC, expand=False)
+
+        # Paste centered on card
+        rw, rh = rotated.size
+        px = cx_ - rw // 2
+        py = cy_ - rh // 2
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        canvas.paste(rotated, (px, py), rotated)
+        return Image.alpha_composite(img.convert("RGBA"), canvas).convert("RGB")
+    except Exception:
+        return img
+
+
+def draw_glowing_header_bar(img, accent_rgb, t):
+    """Animated accent bar that expands from center with a gold pulse glow."""
+    p = ease_io(prog(t, 0.0, 0.5))
+    bar_w = int((W - 96) * p)
+    if bar_w < 2:
+        return img
+    cx_ = W // 2
+    x0, x1 = cx_ - bar_w // 2, cx_ + bar_w // 2
+    y0, y1 = 128, 134
+    # Glow layer — wider, blurred
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    glow_a = int(60 * p)
+    gd.rectangle([x0 - 20, y0 - 4, x1 + 20, y1 + 4], fill=(*R_GOLD, glow_a))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=8))
+    img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
+    # Sharp bar on top
+    bar_a = int(200 * p)
+    img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
+        [x0, y0, x1, y1], fill=(*accent_rgb, bar_a)))
+    # Bright center spark
+    spark_w = max(4, bar_w // 6)
+    spark_a = int(255 * smoothstep(prog(t, 0.0, 0.25)))
+    if spark_a > 8:
+        img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
+            [cx_ - spark_w // 2, y0 - 1, cx_ + spark_w // 2, y1 + 1],
+            fill=(*R_GOLD_LIGHT, spark_a)))
+    return img
+
+
 def peaceful_motion_layer(t, style):
     """style: 'hindi' | 'english' | 'lesson'"""
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -330,12 +440,8 @@ def line_reveal_alpha(t, total, n_lines, start=0.12, end=0.92):
 
 
 def draw_section_header(img, title, accent_rgb, t):
-    """Accent rule + section title."""
-    bar_a = int(115 + 85 * ease_io(prog(t, 0, 0.55)))
-    img = rgba_overlay(
-        img,
-        lambda layer, draw: draw.rectangle([48, 128, W - 48, 134], fill=(*accent_rgb, bar_a)),
-    )
+    """Accent rule (animated glow from center) + section title."""
+    img = draw_glowing_header_bar(img, accent_rgb, t)
     fade = int(255 * smoothstep(prog(t, 0.05, 0.52)))
     if fade < 1:
         return img
@@ -355,8 +461,20 @@ def draw_section_header(img, title, accent_rgb, t):
 # ── Section 1: Intro ──────────────────────────────────────────────────────────
 
 def frame_intro(t, shloka, day_number, total=3.0):
-    """Chapter/verse reveal with breathing rings."""
+    """Chapter/verse reveal with breathing rings, warm saffron grade, Om bg."""
     img = base_canvas(t).convert("RGBA")
+
+    # Enhancement 8: warm saffron/amber color grade over the intro
+    warm = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    wd = ImageDraw.Draw(warm)
+    warm_a = int(38 * ease_io(prog(t, 0.0, 0.6)))
+    wd.rectangle([0, 0, W, H], fill=(200, 90, 10, warm_a))
+    img = Image.alpha_composite(img, warm).convert("RGB")
+
+    # Enhancement 7: faint Om symbol behind content
+    img = draw_om_bg(img, t, alpha_max=22)
+
+    img = img.convert("RGBA")
     arc_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ad = ImageDraw.Draw(arc_layer)
     cx_, cy_ = W // 2, H // 2 - 40
@@ -437,7 +555,9 @@ def frame_intro(t, shloka, day_number, total=3.0):
 def frame_sanskrit(t, shloka, total=5.0):
     """Sanskrit shloka with line-by-line reveal."""
     img = composite_peaceful_bg(base_canvas(t), t, "lesson")  # sage dots motion
+    img = draw_om_bg(img, t, alpha_max=18)
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=218)
+    img = draw_om_on_card(img, t, alpha_max=30)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Shloka", R_SAGE, t)
     d = ImageDraw.Draw(img)
@@ -476,21 +596,51 @@ def frame_sanskrit(t, shloka, total=5.0):
 
 # ── Section 3: Hindi Explanation ─────────────────────────────────────────────
 
+def draw_particles(img, t, trigger_t, cx_=None, cy_=None, n=28, color=None):
+    """Burst of gold particles from center, triggered at trigger_t, fade over 1.2s."""
+    elapsed = t - trigger_t
+    if elapsed < 0 or elapsed > 1.4:
+        return img
+    color = color or R_GOLD
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(layer)
+    cx_ = cx_ or W // 2
+    cy_ = cy_ or H // 2
+    rng = np.random.default_rng(42)
+    angles = rng.uniform(0, 2 * math.pi, n)
+    speeds = rng.uniform(120, 380, n)
+    sizes  = rng.uniform(4, 11, n)
+    fade = max(0.0, 1.0 - elapsed / 1.2)
+    for i in range(n):
+        dist = speeds[i] * elapsed
+        px = int(cx_ + math.cos(angles[i]) * dist)
+        py = int(cy_ + math.sin(angles[i]) * dist)
+        r = int(sizes[i] * fade)
+        if r < 1:
+            continue
+        a = int(220 * fade * fade)
+        dr.ellipse([px - r, py - r, px + r, py + r], fill=(*color, a))
+    blurred = layer.filter(ImageFilter.GaussianBlur(radius=2))
+    return Image.alpha_composite(img.convert("RGBA"), blurred).convert("RGB")
+
+
 def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
-    """Hindi explanation from hindi_explanation field."""
+    """Hindi explanation — all text fades in together after bridge, particle burst on entry."""
     img = composite_peaceful_bg(base_canvas(t), t, "hindi")
+    img = draw_om_bg(img, t, alpha_max=18)
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=222)
+    img = draw_om_on_card(img, t, alpha_max=28)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "हिंदी व्याख्या", R_ROSE, t)
     d = ImageDraw.Draw(img)
 
+    # Enhancement 2: particle burst when text starts appearing
+    img = draw_particles(img, t, trigger_t=bridge_sec, cx_=W // 2, cy_=H // 2, color=R_ROSE)
+
     hindi = shloka.get("hindi_explanation", "")
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
 
-    # Card text area: card top=120, header+bar takes ~190px, card bottom=H-200, footer~132px
-    # Safe text zone: roughly y=310 to y=H-200-20 → max_text_h ≈ H - 530
     MAX_TEXT_H = H - 530
-
     fsize = 40
     for fsize in [40, 36, 32, 28, 24, 20]:
         lines = wrap_devanagari(hindi, hb_path or "", fsize, W - 140) if hb_path else \
@@ -500,23 +650,21 @@ def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
             break
 
     n = len(lines)
-    # All lines appear together the moment bridge voice ends, then stay visible
     text_start_frac = min(0.95, bridge_sec / max(total, 1.0))
     reveal_end_frac = min(0.99, text_start_frac + 0.15)
     lh = fsize + 18
     block_h = n * lh
-    # Clamp start y so block never goes above header area or below card bottom
     card_text_top = 310
     card_text_bot = H - 220
     center_y = H // 2 - block_h // 2 + int(6 * breathe(t, 0.4, 0.45, 5.5))
     vy = max(card_text_top, min(center_y, card_text_bot - block_h))
 
+    rgb = tuple(int(lerp(R_INK[j], R_ROSE[j], 0.15)) for j in range(3))
     for line in lines:
         a = int(255 * smoothstep(prog(t, total * text_start_frac, total * reveal_end_frac)))
         if a < 8:
             vy += lh
             continue
-        rgb = tuple(int(lerp(R_INK[j], R_ROSE[j], 0.15)) for j in range(3))
         if hb_path:
             img = dvs.composite_line_centered(img, vy, line, hb_path, fsize, rgb, a, canvas_w=W)
         else:
@@ -577,10 +725,15 @@ def frame_lesson(t, shloka, total=6.0, bridge_sec=0.0, lesson_hi_dur=0.0):
     English appears after Hindi lesson voice ends.
     """
     img = composite_peaceful_bg(base_canvas(t), t, "lesson")
+    img = draw_om_bg(img, t, alpha_max=18)
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=225)
+    img = draw_om_on_card(img, t, alpha_max=28)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Life Lesson", R_SAGE, t)
     d = ImageDraw.Draw(img)
+
+    # Enhancement 2: particle burst when lesson text appears
+    img = draw_particles(img, t, trigger_t=bridge_sec, cx_=W // 2, cy_=H // 2, color=R_SAGE)
 
     hindi_lesson   = shloka.get("life_lesson_hindi", "")
     english_lesson = shloka.get("life_lesson_english", "")
