@@ -41,6 +41,53 @@ from font_helper import raqm_text_kwargs
 _PROD_W, _PROD_H, _PROD_FPS = 1080, 1920, 30
 W, H, FPS = _PROD_W, _PROD_H, _PROD_FPS
 
+# ── Krishna background cache ──────────────────────────────────────────────────
+_krishna_cache: dict = {}
+
+def _load_krishna(w, h):
+    """
+    Load krishna.jpg, resize to cover w×h (center-crop), desaturate 80%,
+    apply strong vignette so edges fade to black, cache the result.
+    Returns an RGBA PIL image ready to composite at low alpha.
+    """
+    key = (w, h)
+    if key in _krishna_cache:
+        return _krishna_cache[key]
+
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(bot_dir, "krishna.jpg")
+    if not os.path.isfile(path):
+        _krishna_cache[key] = None
+        return None
+
+    src = Image.open(path).convert("RGB")
+    sw, sh = src.size
+
+    # Cover-fit: scale so image fills w×h, then center-crop
+    scale = max(w / sw, h / sh)
+    nw, nh = int(sw * scale), int(sh * scale)
+    src = src.resize((nw, nh), Image.LANCZOS)
+    left = (nw - w) // 2
+    top  = (nh - h) // 2
+    src = src.crop((left, top, left + w, top + h))
+
+    # Desaturate 80% — keeps a hint of color, mostly grayscale
+    gray = src.convert("L").convert("RGB")
+    src = Image.blend(src, gray, alpha=0.80)
+
+    # Heavy vignette — fade to black at edges so gradient/text stays readable
+    arr = np.asarray(src, dtype=np.float32)
+    yy, xx = np.ogrid[:h, :w]
+    cx_, cy_ = (w - 1) / 2.0, (h - 1) / 2.0
+    dist = np.sqrt(((xx - cx_) / cx_) ** 2 + ((yy - cy_) / cy_) ** 2)
+    # Vignette: center=1.0, edges=0.0, power 1.8
+    vig = np.clip(1.0 - dist ** 1.8, 0.0, 1.0)[..., np.newaxis]
+    arr = arr * vig
+    src = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+    _krishna_cache[key] = src
+    return src
+
 
 def font(size, bold=False, devanagari=False, hindi_prose=False):
     """Prefer calm Latin UI fonts; Devanagari uses Raqm shaping when available."""
@@ -133,13 +180,26 @@ def breathe(t, phase=0.0, amp=1.0, period=4.2):
 
 
 def base_canvas(t=0.0):
-    """Soft vertical gradient, drifting light orbs, barely-there grain."""
+    """Soft vertical gradient, Krishna bg watermark, drifting light orbs, barely-there grain."""
     arr = np.zeros((H, W, 3), dtype=np.uint8)
     drift = 0.04 * math.sin(t * 0.35)
     for y in range(H):
         u = y / H + drift * (1.0 - abs(y / H - 0.5))
         arr[y] = lerp_col3(R_GRAD_TOP, R_GRAD_MID, R_GRAD_BOT, clamp(u))
     img = Image.fromarray(arr).convert("RGBA")
+
+    # ── Krishna watermark — very subtle, breathing alpha ─────────────────────
+    krishna = _load_krishna(W, H)
+    if krishna is not None:
+        # Gentle breathing: alpha oscillates between 28 and 38 (~11-15% opacity)
+        k_alpha = int(33 + 5 * math.sin(t * 0.4))
+        k_layer = krishna.copy()
+        # Apply alpha by modifying the A channel
+        r, g, b, a = k_layer.split()
+        # Scale existing vignette-alpha by our desired opacity
+        a = a.point(lambda x: int(x * k_alpha / 255))
+        k_layer = Image.merge("RGBA", (r, g, b, a))
+        img = Image.alpha_composite(img, k_layer)
 
     bokeh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bd = ImageDraw.Draw(bokeh)
@@ -471,8 +531,8 @@ def frame_intro(t, shloka, day_number, total=3.0):
     wd.rectangle([0, 0, W, H], fill=(200, 90, 10, warm_a))
     img = Image.alpha_composite(img, warm).convert("RGB")
 
-    # Enhancement 7: faint Om symbol behind content
-    img = draw_om_bg(img, t, alpha_max=22)
+    # Enhancement 7: faint Om symbol behind content on intro
+    img = draw_om_on_card(img, t, alpha_max=20)
 
     img = img.convert("RGBA")
     arc_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -554,8 +614,7 @@ def frame_intro(t, shloka, day_number, total=3.0):
 
 def frame_sanskrit(t, shloka, total=5.0):
     """Sanskrit shloka with line-by-line reveal."""
-    img = composite_peaceful_bg(base_canvas(t), t, "lesson")  # sage dots motion
-    img = draw_om_bg(img, t, alpha_max=18)
+    img = composite_peaceful_bg(base_canvas(t), t, "lesson")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=218)
     img = draw_om_on_card(img, t, alpha_max=30)
     d = ImageDraw.Draw(img)
@@ -627,7 +686,6 @@ def draw_particles(img, t, trigger_t, cx_=None, cy_=None, n=28, color=None):
 def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
     """Hindi explanation — all text fades in together after bridge, particle burst on entry."""
     img = composite_peaceful_bg(base_canvas(t), t, "hindi")
-    img = draw_om_bg(img, t, alpha_max=18)
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=222)
     img = draw_om_on_card(img, t, alpha_max=28)
     d = ImageDraw.Draw(img)
@@ -725,7 +783,6 @@ def frame_lesson(t, shloka, total=6.0, bridge_sec=0.0, lesson_hi_dur=0.0):
     English appears after Hindi lesson voice ends.
     """
     img = composite_peaceful_bg(base_canvas(t), t, "lesson")
-    img = draw_om_bg(img, t, alpha_max=18)
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=225)
     img = draw_om_on_card(img, t, alpha_max=28)
     d = ImageDraw.Draw(img)
