@@ -171,7 +171,7 @@ def build_caption(shloka, day_number):
 
 def _post_image(image_path, caption):
     """Post image to Instagram + Facebook."""
-    from platform.poster import (upload_image_to_cloudinary,
+    from uploader.poster import (upload_image_to_cloudinary,
                                   post_to_instagram, post_image_to_facebook)
     print("  Uploading image to Cloudinary...")
     img_url = upload_image_to_cloudinary(image_path)
@@ -188,9 +188,9 @@ def _post_image(image_path, caption):
 
 def _post_reel(reel_path, caption, shloka, day_number):
     """Post reel to Instagram, Facebook, and YouTube."""
-    from platform.poster import (upload_video_to_cloudinary,
+    from uploader.poster import (upload_video_to_cloudinary,
                                   post_reel_to_instagram, post_video_to_facebook)
-    from platform.youtube_upload import upload_to_youtube
+    from uploader.youtube_upload import upload_to_youtube
 
     print("  Uploading reel to Cloudinary...")
     vid_url = upload_video_to_cloudinary(reel_path)

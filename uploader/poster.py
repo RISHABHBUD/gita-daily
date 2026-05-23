@@ -22,8 +22,8 @@ import hashlib
 import requests
 
 # ── UPDATE THIS per project ────────────────────────────────────
-# Get your Page ID from: Graph API Explorer → me/accounts
-FB_PAGE_ID = "YOUR_FACEBOOK_PAGE_ID"
+# GitaDaily Facebook Page ID
+FB_PAGE_ID = "1182397031613289"
 # ──────────────────────────────────────────────────────────────
 
 
