@@ -41,14 +41,109 @@ from font_helper import raqm_text_kwargs
 _PROD_W, _PROD_H, _PROD_FPS = 1080, 1920, 30
 W, H, FPS = _PROD_W, _PROD_H, _PROD_FPS
 
-# ── Krishna background cache ──────────────────────────────────────────────────
+# ── Petal cache ───────────────────────────────────────────────────────────────
+_petal_cache: dict = {}
+
+def _load_petal_variants():
+    """
+    Load petal_transparent.png, pre-render tinted variants at multiple sizes.
+    Returns list of RGBA PIL images ready to paste.
+    """
+    if _petal_cache:
+        return _petal_cache.get("variants", [])
+
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(bot_dir, "petal_transparent.png")
+    if not os.path.isfile(path):
+        _petal_cache["variants"] = []
+        return []
+
+    src = Image.open(path).convert("RGBA")
+
+    # Tint variants: (R_mult, G_mult, B_mult, label)
+    tints = [
+        (1.00, 0.55, 0.65),  # original pink
+        (1.00, 0.72, 0.30),  # saffron gold
+        (1.00, 0.65, 0.75),  # soft rose
+        (1.00, 0.85, 0.45),  # warm gold
+        (0.90, 0.42, 0.58),  # deep pink
+        (1.00, 0.90, 0.80),  # cream
+    ]
+    sizes = [38, 48, 56, 44, 52, 40]  # px — varied sizes
+
+    variants = []
+    for i, (rm, gm, bm) in enumerate(tints):
+        sz = sizes[i % len(sizes)]
+        resized = src.resize((sz, sz), Image.LANCZOS)
+        arr = np.array(resized, dtype=np.float32)
+        # Apply tint to RGB channels, preserve alpha
+        arr[:,:,0] = np.clip(arr[:,:,0] * rm, 0, 255)
+        arr[:,:,1] = np.clip(arr[:,:,1] * gm, 0, 255)
+        arr[:,:,2] = np.clip(arr[:,:,2] * bm, 0, 255)
+        variants.append(Image.fromarray(arr.astype(np.uint8), "RGBA"))
+
+    _petal_cache["variants"] = variants
+    return variants
+
+
+def draw_real_petals(img, t):
+    """
+    Falling real petal images — loaded from petal_transparent.png.
+    18 petals, each with unique position/speed/sway/rotation/tint.
+    Loops seamlessly, clearly visible on cards.
+    """
+    variants = _load_petal_variants()
+    if not variants:
+        return img
+
+    canvas = img.convert("RGBA")
+    N = 18
+    rng = np.random.default_rng(77)
+    x_pos   = rng.uniform(0.02, 0.98, N)
+    speeds  = rng.uniform(0.030, 0.075, N)
+    phases  = rng.uniform(0.0, 1.0, N)
+    sway_a  = rng.uniform(20, 65, N)
+    sway_s  = rng.uniform(0.25, 0.90, N)
+    rot_s   = rng.uniform(-1.2, 1.2, N)
+    var_idx = rng.integers(0, len(variants), N)
+
+    for i in range(N):
+        fall_frac = (t * speeds[i] + phases[i]) % 1.0
+        py = int(fall_frac * (H + 160)) - 80
+        sway = math.sin(t * sway_s[i] + i * 1.5) * sway_a[i]
+        px = int(x_pos[i] * W + sway)
+
+        # Smooth fade in/out at loop boundaries
+        fade_in  = clamp(fall_frac / 0.07)
+        fade_out = clamp((1.0 - fall_frac) / 0.09)
+        opacity  = min(fade_in, fade_out)
+        if opacity < 0.06:
+            continue
+
+        # Rotate the petal image
+        angle_deg = math.degrees(t * rot_s[i] + i * 0.7) % 360
+        petal = variants[var_idx[i]].copy()
+        petal = petal.rotate(angle_deg, resample=Image.BICUBIC, expand=True)
+
+        # Apply opacity to alpha channel
+        r, g, b, a = petal.split()
+        a = a.point(lambda x: int(x * opacity))
+        petal = Image.merge("RGBA", (r, g, b, a))
+
+        # Paste centered at (px, py)
+        pw, ph = petal.size
+        paste_x = px - pw // 2
+        paste_y = py - ph // 2
+        canvas.paste(petal, (paste_x, paste_y), petal)
+
+    return canvas.convert("RGB")
 _krishna_cache: dict = {}
 
 def _load_krishna(w, h):
     """
-    Load krishna.jpg, resize to cover w×h (center-crop), desaturate 80%,
-    apply strong vignette so edges fade to black, cache the result.
-    Returns an RGBA PIL image ready to composite at low alpha.
+    Load krishna.jpg, resize to cover w×h (center-crop), apply vignette.
+    Returns an RGBA PIL image with full saturation — desaturation is applied
+    per-frame in base_canvas so we can animate it over time.
     """
     key = (w, h)
     if key in _krishna_cache:
@@ -71,22 +166,19 @@ def _load_krishna(w, h):
     top  = (nh - h) // 2
     src = src.crop((left, top, left + w, top + h))
 
-    # Desaturate 80% — keeps a hint of color, mostly grayscale
-    gray = src.convert("L").convert("RGB")
-    src = Image.blend(src, gray, alpha=0.80)
-
-    # Heavy vignette — fade to black at edges so gradient/text stays readable
+    # Heavy vignette — fade to black at edges so text stays readable
     arr = np.asarray(src, dtype=np.float32)
     yy, xx = np.ogrid[:h, :w]
     cx_, cy_ = (w - 1) / 2.0, (h - 1) / 2.0
     dist = np.sqrt(((xx - cx_) / cx_) ** 2 + ((yy - cy_) / cy_) ** 2)
-    # Vignette: center=1.0, edges=0.0, power 1.8
     vig = np.clip(1.0 - dist ** 1.8, 0.0, 1.0)[..., np.newaxis]
     arr = arr * vig
-    src = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    src = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
-    _krishna_cache[key] = src
-    return src
+    # Store both color and grayscale versions for per-frame blending
+    gray = src.convert("L").convert("RGB")
+    _krishna_cache[key] = (src.convert("RGBA"), gray.convert("RGBA"))
+    return _krishna_cache[key]
 
 
 def font(size, bold=False, devanagari=False, hindi_prose=False):
@@ -188,18 +280,24 @@ def base_canvas(t=0.0):
         arr[y] = lerp_col3(R_GRAD_TOP, R_GRAD_MID, R_GRAD_BOT, clamp(u))
     img = Image.fromarray(arr).convert("RGBA")
 
-    # ── Krishna watermark — very subtle, breathing alpha ─────────────────────
-    krishna = _load_krishna(W, H)
-    if krishna is not None:
-        # Gentle breathing: alpha oscillates between 28 and 38 (~11-15% opacity)
-        k_alpha = int(33 + 5 * math.sin(t * 0.4))
-        k_layer = krishna.copy()
-        # Apply alpha by modifying the A channel
-        r, g, b, a = k_layer.split()
-        # Scale existing vignette-alpha by our desired opacity
+    # ── Krishna watermark — grayscale → color bloom over first 6s ───────────
+    krishna_data = _load_krishna(W, H)
+    if krishna_data is not None:
+        k_color, k_gray = krishna_data
+        # Color bloom: starts fully gray, eases to 70% color over 6s, then holds
+        # desat=1.0 → pure gray, desat=0.0 → full color
+        bloom_p = smoothstep(clamp(t / 6.0))          # 0→1 over 6s
+        desat   = 1.0 - bloom_p * 0.70                # 1.0 → 0.30
+        # Blend color and gray versions
+        k_frame = Image.blend(k_color.convert("RGB"), k_gray.convert("RGB"), alpha=desat)
+        k_frame = k_frame.convert("RGBA")
+        # Breathing opacity: low enough that text stays readable even at full color
+        # gray phase: ~10% opacity, color phase: ~16% opacity (still subtle)
+        k_alpha = int((28 + bloom_p * 13) + 4 * math.sin(t * 0.4))
+        r, g, b, a = k_frame.split()
         a = a.point(lambda x: int(x * k_alpha / 255))
-        k_layer = Image.merge("RGBA", (r, g, b, a))
-        img = Image.alpha_composite(img, k_layer)
+        k_frame = Image.merge("RGBA", (r, g, b, a))
+        img = Image.alpha_composite(img, k_frame)
 
     bokeh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bd = ImageDraw.Draw(bokeh)
@@ -232,6 +330,7 @@ def base_canvas(t=0.0):
     noise = rng.integers(0, 5, size=(H, W), dtype=np.uint8)
     layer = Image.fromarray(noise, "L").convert("RGB")
     base_rgb = img.convert("RGB")
+
     layer = ImageChops.multiply(layer, Image.new("RGB", (W, H), (255, 255, 255)))
     return ImageChops.soft_light(base_rgb, layer)
 
@@ -617,6 +716,7 @@ def frame_sanskrit(t, shloka, total=5.0):
     img = composite_peaceful_bg(base_canvas(t), t, "lesson")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=218)
     img = draw_om_on_card(img, t, alpha_max=30)
+    img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Shloka", R_SAGE, t)
     d = ImageDraw.Draw(img)
@@ -688,6 +788,7 @@ def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
     img = composite_peaceful_bg(base_canvas(t), t, "hindi")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=222)
     img = draw_om_on_card(img, t, alpha_max=28)
+    img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "हिंदी व्याख्या", R_ROSE, t)
     d = ImageDraw.Draw(img)
@@ -785,6 +886,7 @@ def frame_lesson(t, shloka, total=6.0, bridge_sec=0.0, lesson_hi_dur=0.0):
     img = composite_peaceful_bg(base_canvas(t), t, "lesson")
     img = frosted_card(img, [36, 120, W - 36, H - 200], radius=32, fill_alpha=225)
     img = draw_om_on_card(img, t, alpha_max=28)
+    img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Life Lesson", R_SAGE, t)
     d = ImageDraw.Draw(img)
@@ -1081,7 +1183,7 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
                 "hi", os.path.join(tts_dir, "tts_hindi.mp3"), rate="-16%"
             ),
             "bridge_lesson": generate_tts(
-                "Is shloka se hame ye sikhna chahiye ki",
+                "Is shloka se humein ye sikhna chahiye ki",
                 "hi", os.path.join(tts_dir, "tts_bridge_lesson.mp3"), rate="-5%"
             ),
             "lesson_hi": generate_tts(
