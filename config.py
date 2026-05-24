@@ -1,6 +1,6 @@
 # Gita Daily Bot — Configuration
-PAGE_NAME   = "GitaDaily"
-PAGE_HANDLE = "@gitadaily.in"
+PAGE_NAME   = "GitaDailySoul"
+PAGE_HANDLE = "@gitadailysoul"
 TAGLINE     = "One shloka. One lesson. Every day."
 
 # Branding colors — spiritual/devotional theme

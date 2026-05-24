@@ -619,21 +619,60 @@ def draw_section_header(img, title, accent_rgb, t):
 
 # ── Section 1: Intro ──────────────────────────────────────────────────────────
 
-def frame_intro(t, shloka, day_number, total=3.0):
-    """Chapter/verse reveal with breathing rings, warm saffron grade, Om bg."""
+def frame_intro(t, shloka, day_number, total=3.0, thumb_path=None):
+    """
+    First frame (t=0) = the post image (1080x1080 cropped to 1080x1920).
+    After 1.5s it crossfades into the animated chapter/verse reveal.
+    This makes the thumbnail look like the post image.
+    """
+    # ── Static post image as thumbnail (first 1.5s) ───────────────────────
+    THUMB_DUR = 1.5
+    if t < THUMB_DUR:
+        # Use provided thumb_path, or generate one on the fly
+        import os as _os
+        _thumb = thumb_path or _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            "__thumb_cache__.jpg"
+        )
+        if not _os.path.exists(_thumb):
+            from image_gen import create_post_image
+            create_post_image(shloka, _thumb, day_number)
+        try:
+            thumb = Image.open(_thumb).convert("RGB")
+            # Scale 1080x1080 → fit into 1080x1920 with black bars top/bottom
+            tw_, th_ = thumb.size
+            scale = W / tw_
+            new_h = int(th_ * scale)
+            thumb = thumb.resize((W, new_h), Image.LANCZOS)
+            # Paste centered on black canvas
+            canvas = Image.new("RGB", (W, H), (8, 5, 18))
+            y_off = (H - new_h) // 2
+            canvas.paste(thumb, (0, y_off))
+            # Fade out at end of thumbnail section
+            fade_out = smoothstep(prog(t, THUMB_DUR * 0.6, THUMB_DUR))
+            if fade_out > 0.01:
+                dark = Image.new("RGB", (W, H), (8, 5, 18))
+                canvas = Image.blend(canvas, dark, fade_out)
+            return np.array(canvas)
+        except Exception:
+            pass  # fall through to animated intro if image fails
+
+    # ── Animated chapter/verse reveal (after thumbnail) ──────────────────
+    t2 = max(0.0, t - THUMB_DUR)
+    total2 = max(total - THUMB_DUR, 1.0)
+
     img = base_canvas(t).convert("RGBA")
 
-    # Enhancement 8: warm saffron/amber color grade over the intro
+    # Warm saffron color grade
     warm = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     wd = ImageDraw.Draw(warm)
-    warm_a = int(38 * ease_io(prog(t, 0.0, 0.6)))
+    warm_a = int(38 * ease_io(prog(t2, 0.0, 0.6)))
     wd.rectangle([0, 0, W, H], fill=(200, 90, 10, warm_a))
     img = Image.alpha_composite(img, warm).convert("RGB")
 
-    # Enhancement 7: faint Om symbol behind content on intro
     img = draw_om_on_card(img, t, alpha_max=20)
-
     img = img.convert("RGBA")
+
     arc_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ad = ImageDraw.Draw(arc_layer)
     cx_, cy_ = W // 2, H // 2 - 40
@@ -652,7 +691,7 @@ def frame_intro(t, shloka, day_number, total=3.0):
     img = Image.alpha_composite(img, arc_layer).convert("RGB")
     d = ImageDraw.Draw(img)
 
-    p = ease_io(prog(t, 0.05, total * 0.95))
+    p = ease_io(prog(t2, 0.05, total2 * 0.95))
 
     # "Bhagavad Gita" subtitle
     subtitle = "Bhagavad Gita"
@@ -667,7 +706,7 @@ def frame_intro(t, shloka, day_number, total=3.0):
         cf = font(30, False)
         img = draw_text_alpha(img, (cx(d, ch_name, cf), int(H // 2 - 348 + 20 * (1 - p))),
                               ch_name, cf, R_INK_MUTED,
-                              int(230 * smoothstep(prog(t, 0.15, total * 0.9))))
+                              int(230 * smoothstep(prog(t2, 0.15, total2 * 0.9))))
         d = ImageDraw.Draw(img)
 
     # Chapter · Verse (large)
@@ -678,28 +717,28 @@ def frame_intro(t, shloka, day_number, total=3.0):
             break
     img = draw_text_alpha(img, (cx(d, cv_txt, cvf), int(H // 2 - 240 + 36 * (1 - p))),
                           cv_txt, cvf, R_INK,
-                          int(255 * smoothstep(prog(t, 0.2, total * 0.85))))
+                          int(255 * smoothstep(prog(t2, 0.2, total2 * 0.85))))
     d = ImageDraw.Draw(img)
 
-    # अध्याय X, श्लोक Y in Devanagari
+    # Devanagari
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
     deva_txt = f"अध्याय {shloka['chapter']}, श्लोक {shloka['verse']}"
-    deva_a = int(230 * smoothstep(prog(t, 0.25, total * 0.9)))
+    deva_a = int(230 * smoothstep(prog(t2, 0.25, total2 * 0.9)))
     if hb_path and deva_a > 8:
         img = dvs.composite_line_centered(img, int(H // 2 - 168 + 14 * (1 - p)),
                                           deva_txt, hb_path, 36, R_GOLD, deva_a, canvas_w=W)
     d = ImageDraw.Draw(img)
 
-    # Day counter
+    # Day counter — "Day X of 700"
     day_txt = f"Day {day_number} of 700"
     df = font(32, False)
     img = draw_text_alpha(img, (cx(d, day_txt, df), int(H // 2 - 100 + 16 * (1 - p))),
                           day_txt, df, R_GOLD,
-                          int(240 * smoothstep(prog(t, 0.35, total))))
+                          int(240 * smoothstep(prog(t2, 0.35, total2))))
     d = ImageDraw.Draw(img)
 
-    # Thin gold divider
-    dw = int((W - 200) * smoothstep(prog(t, 0.25, total * 0.75)))
+    # Gold divider
+    dw = int((W - 200) * smoothstep(prog(t2, 0.25, total2 * 0.75)))
     yl = H // 2 - 36
     if dw > 6:
         img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
@@ -1096,7 +1135,7 @@ def pick_background_track(bot_dir):
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
+def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False, thumb_path=None):
     """
     Generate shloka reel from gita_data.json entry.
 
@@ -1243,7 +1282,7 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
         # ── Video clips ───────────────────────────────────────────────────────
         print("  Rendering video sections...")
         clips = [
-            make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"]),
+            make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"], thumb_path=thumb_path),
             make_clip(frame_sanskrit, actual["sanskrit"], shloka=shloka, total=actual["sanskrit"]),
             make_clip(frame_hindi,    actual["hindi"],    shloka=shloka, total=actual["hindi"],   bridge_sec=bh + 0.15),
             make_clip(frame_lesson,   actual["lesson"],   shloka=shloka, total=actual["lesson"], bridge_sec=bl + 0.15 + 1.05 + 1.0, lesson_hi_dur=lh_dur),

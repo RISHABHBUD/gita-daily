@@ -34,16 +34,35 @@ def load_shlokas():
     path = os.path.join(os.path.dirname(__file__), GITA_FILE)
     with open(path, encoding="utf-8") as f:
         shlokas = json.load(f)
-    # Inject chapter_name if missing
     for s in shlokas:
         if not s.get("chapter_name"):
             s["chapter_name"] = CHAPTER_TITLES.get(s["chapter"], "")
     return shlokas
 
 
-def get_todays_shloka(shlokas):
-    idx = datetime.now().timetuple().tm_yday % len(shlokas)
-    return shlokas[idx], idx + 1  # (shloka, day_number)
+def get_next_shloka(shlokas, advance=True):
+    """
+    Sequential rotation via posted.json.
+    Picks the next unposted shloka in order.
+    posted.json stores: {"last_index": N}
+    """
+    tracker_path = os.path.join(os.path.dirname(__file__), POSTED_FILE)
+    if os.path.exists(tracker_path):
+        with open(tracker_path, encoding="utf-8") as f:
+            data = json.load(f)
+        last = data.get("last_index", -1)
+    else:
+        last = -1
+
+    next_idx = (last + 1) % len(shlokas)
+    return shlokas[next_idx], next_idx + 1, next_idx
+
+
+def save_posted_index(index):
+    """Save the index of the shloka just posted."""
+    tracker_path = os.path.join(os.path.dirname(__file__), POSTED_FILE)
+    with open(tracker_path, "w", encoding="utf-8") as f:
+        json.dump({"last_index": index}, f, indent=2)
 
 
 def main():
@@ -77,22 +96,23 @@ def main():
 
     # Pick shloka
     if args.id:
-        shloka = next((s for s in shlokas if s["id"]==args.id), None)
+        shloka = next((s for s in shlokas if s["id"] == args.id), None)
         if not shloka:
             print(f"  [!] ID '{args.id}' not found.")
             sys.exit(1)
-        day_number = int(args.id.split("_")[-1]) if "_" in args.id else 1
+        raw_index = next(i for i, s in enumerate(shlokas) if s["id"] == args.id)
+        day_number = raw_index + 1
         print(f"\n[1/4] Using shloka: {args.id}")
     elif args.day:
-        idx = (args.day - 1) % len(shlokas)
-        shloka = shlokas[idx]
+        raw_index = (args.day - 1) % len(shlokas)
+        shloka = shlokas[raw_index]
         day_number = args.day
         print(f"\n[1/4] Day {day_number}: BG {shloka['chapter']}.{shloka['verse']}")
     else:
-        shloka, day_number = get_todays_shloka(shlokas)
-        print(f"\n[1/4] Today (Day {day_number}): BG {shloka['chapter']}.{shloka['verse']}")
+        shloka, day_number, raw_index = get_next_shloka(shlokas, advance=True)
+        print(f"\n[1/4] Next in sequence — Day {day_number} of {len(shlokas)}: BG {shloka['chapter']}.{shloka['verse']}")
 
-    print(f"  {shloka.get('chapter_name','')} | {shloka['category']}")
+    print(f"  {shloka.get('chapter_name', '')} | {shloka['category']}")
 
     # Output folder
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -119,6 +139,7 @@ def main():
             reel_path,
             day_number,
             fast_preview=bool(args.test and args.fast_preview),
+            thumb_path=image_path,   # reuse already-generated post image as thumbnail
         )
     else:
         reel_path = None
@@ -147,26 +168,38 @@ def main():
     else:
         _post_all(image_path, reel_path, caption, shloka, day_number)
 
+    # Save progress after successful reel post
+    # --reel-only is the main daily workflow, so it owns the index advance
+    if not args.test and not args.id and not args.day:
+        save_posted_index(raw_index)
+        print(f"  [✓] Progress saved (Day {day_number} posted)")
+
     print(f"\n✅ Done! Saved in: {out_dir}\n")
 
 
 def build_caption(shloka, day_number):
     from config import HASHTAGS, PAGE_HANDLE
-    ch = shloka["chapter"]; v = shloka["verse"]
-    lines = [
-        f"🕉️ Bhagavad Gita — Chapter {ch}, Verse {v}",
-        f"Day {day_number} of 700",
-        "",
-        shloka.get("english_explanation", ""),
-        "",
-        f"💡 {shloka.get('life_lesson_english', '')}",
-        "",
-        "─" * 30,
-        f"Follow {PAGE_HANDLE} for daily Gita wisdom",
-        "",
-        " ".join(HASHTAGS[:12]),
-    ]
-    return "\n".join(lines)
+    ch = shloka["chapter"]
+    v  = shloka["verse"]
+    total = 700
+
+    caption = f"""🕉️ Bhagavad Gita | Chapter {ch}, Verse {v}
+📅 Day {day_number} of {total} — One shloka a day, every day.
+
+✨ "{shloka.get('english_explanation', '')}"
+
+💡 Life Lesson:
+{shloka.get('life_lesson_english', '')}
+
+🌸 In Hindi:
+{shloka.get('life_lesson_hindi', '')}
+
+{"─" * 28}
+🙏 Follow {PAGE_HANDLE} for daily Gita wisdom
+📖 700 shlokas · 700 days · One timeless truth
+
+{" ".join(HASHTAGS[:15])}"""
+    return caption
 
 
 def _post_image(image_path, caption):

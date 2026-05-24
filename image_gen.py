@@ -229,7 +229,7 @@ def create_post_image(shloka, output_path, day_number=1):
     sy += 28
 
     # ── Hindi meaning — HarfBuzz path when uharfbuzz is installed ──
-    hindi = shloka["hindi"]
+    hindi = shloka.get("hindi_explanation") or shloka.get("hindi", "")
     hb_path_hindi = dvs.first_font_path(False) if dvs.is_available() else None
     for fsize in [34, 30, 26, 24]:
         hf = font(fsize, False, devanagari=True, hindi_prose=False)
@@ -256,7 +256,7 @@ def create_post_image(shloka, output_path, day_number=1):
         sy += lh
 
     # ── Lesson — Latin font ────────────────────────────────────
-    lesson = shloka["lesson"]
+    lesson = shloka.get("life_lesson_english") or shloka.get("lesson", "")
     d.rectangle([80, sy+10, W-80, sy+13], fill=(*C_GOLD, 60))
     sy += 24
 

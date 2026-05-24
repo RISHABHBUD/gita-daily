@@ -3,16 +3,16 @@ name: Post Daily Shloka Reel
 # Triggered by cron-job.org via repository_dispatch
 # cron-job.org job: POST https://api.github.com/repos/YOUR_USER/YOUR_REPO/actions/workflows/post_reel.yml/dispatches
 # Body: {"ref":"main"}
-# Schedule: 7:00 AM IST = 01:30 UTC
+# Schedule: 7:00 AM IST = 01:30 UTC  (daily, every day)
 on:
-  workflow_dispatch:   # manual trigger (for testing)
+  workflow_dispatch:      # manual trigger (for testing from GitHub UI)
   repository_dispatch:
     types: [post_reel]
 
 jobs:
   post-reel:
     runs-on: ubuntu-latest
-    timeout-minutes: 30   # reel generation + video processing can take ~15 min
+    timeout-minutes: 30   # reel generation + Instagram video processing ~15 min
 
     steps:
       - name: Checkout repo
@@ -50,10 +50,11 @@ jobs:
           YOUTUBE_TOKEN_PICKLE:   ${{ secrets.YOUTUBE_TOKEN_PICKLE }}
         run: python run_daily.py --reel-only
 
-      - name: Commit posted.json
+      - name: Commit posted.json (advance to next day)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add posted.json || true
-          git diff --staged --quiet || git commit -m "chore: update posted.json [skip ci]"
+          git diff --staged --quiet || git commit -m "chore: advance posted.json [skip ci]"
           git push
