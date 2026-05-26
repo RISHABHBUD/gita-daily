@@ -27,7 +27,7 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 # Paths — relative to repo root (not this file's location)
 _ROOT               = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CLIENT_SECRETS_FILE = os.path.join(_ROOT, "client_secrets.json")
+CLIENT_SECRETS_FILE = os.path.join(_ROOT, "youtube_secrets.json")
 TOKEN_FILE          = os.path.join(_ROOT, "token.pickle")
 
 # ── UPDATE per project ─────────────────────────────────────────
