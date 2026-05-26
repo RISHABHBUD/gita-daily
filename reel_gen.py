@@ -271,8 +271,11 @@ def breathe(t, phase=0.0, amp=1.0, period=4.2):
     return math.sin((t + phase) * (2 * math.pi / period)) * amp
 
 
-def base_canvas(t=0.0):
-    """Soft vertical gradient, Krishna bg watermark, drifting light orbs, barely-there grain."""
+def base_canvas(t=0.0, krishna_strength=1.0):
+    """
+    Soft vertical gradient, Krishna bg, drifting light orbs, grain.
+    krishna_strength: 1.0 = default subtle, 2.5 = strong for intro thumbnail
+    """
     arr = np.zeros((H, W, 3), dtype=np.uint8)
     drift = 0.04 * math.sin(t * 0.35)
     for y in range(H):
@@ -280,20 +283,17 @@ def base_canvas(t=0.0):
         arr[y] = lerp_col3(R_GRAD_TOP, R_GRAD_MID, R_GRAD_BOT, clamp(u))
     img = Image.fromarray(arr).convert("RGBA")
 
-    # ── Krishna watermark — grayscale → color bloom over first 6s ───────────
+    # ── Krishna watermark ─────────────────────────────────────────────────
     krishna_data = _load_krishna(W, H)
     if krishna_data is not None:
         k_color, k_gray = krishna_data
-        # Color bloom: starts fully gray, eases to 70% color over 6s, then holds
-        # desat=1.0 → pure gray, desat=0.0 → full color
-        bloom_p = smoothstep(clamp(t / 6.0))          # 0→1 over 6s
-        desat   = 1.0 - bloom_p * 0.70                # 1.0 → 0.30
-        # Blend color and gray versions
+        bloom_p = smoothstep(clamp(t / 6.0))
+        desat   = 1.0 - bloom_p * 0.70
         k_frame = Image.blend(k_color.convert("RGB"), k_gray.convert("RGB"), alpha=desat)
         k_frame = k_frame.convert("RGBA")
-        # Breathing opacity: low enough that text stays readable even at full color
-        # gray phase: ~10% opacity, color phase: ~16% opacity (still subtle)
-        k_alpha = int((28 + bloom_p * 13) + 4 * math.sin(t * 0.4))
+        # Base opacity scaled by krishna_strength
+        k_alpha = int(((28 + bloom_p * 13) + 4 * math.sin(t * 0.4)) * krishna_strength)
+        k_alpha = min(k_alpha, 255)
         r, g, b, a = k_frame.split()
         a = a.point(lambda x: int(x * k_alpha / 255))
         k_frame = Image.merge("RGBA", (r, g, b, a))
@@ -330,7 +330,6 @@ def base_canvas(t=0.0):
     noise = rng.integers(0, 5, size=(H, W), dtype=np.uint8)
     layer = Image.fromarray(noise, "L").convert("RGB")
     base_rgb = img.convert("RGB")
-
     layer = ImageChops.multiply(layer, Image.new("RGB", (W, H), (255, 255, 255)))
     return ImageChops.soft_light(base_rgb, layer)
 
@@ -617,58 +616,87 @@ def draw_section_header(img, title, accent_rgb, t):
     return draw_text_alpha(img, (cx(d, title, tf), 148), title, tf, R_INK, fade)
 
 
+def draw_shloka_subheading(img, shloka, t):
+    """
+    Neat pill-style subheading below the section header showing:
+      Ch.1 · V.1  |  Arjuna Vishada Yoga
+    Fades in with the header. Sits at y≈196.
+    """
+    fade = int(220 * smoothstep(prog(t, 0.08, 0.55)))
+    if fade < 4:
+        return img
+
+    ch   = shloka.get("chapter", "")
+    v    = shloka.get("verse", "")
+    name = shloka.get("chapter_title", "")
+
+    # Build label: "Ch.1 · V.1  |  Arjuna Vishada Yoga"
+    ref  = f"Ch.{ch}  ·  V.{v}"
+    label = f"{ref}   |   {name}" if name else ref
+
+    d  = ImageDraw.Draw(img)
+    tf = font(24, False)
+
+    # Truncate if too wide
+    max_w = W - 120
+    while tw(d, label, tf) > max_w and "  |  " in label:
+        label = label[:label.rfind("  |  ")]
+    while tw(d, label, tf) > max_w:
+        label = label[:-4] + "…"
+
+    lw   = tw(d, label, tf)
+    px, py = 28, 8          # horizontal / vertical padding inside pill
+    pill_w = lw + px * 2
+    pill_h = tf.size + py * 2
+    pill_x = (W - pill_w) // 2
+    pill_y = 192
+
+    # Frosted pill background
+    pill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    pd   = ImageDraw.Draw(pill)
+    pd.rounded_rectangle(
+        [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+        radius=pill_h // 2,
+        fill=(*R_CARD, int(180 * fade / 220)),
+        outline=(*R_CARD_RIM, int(120 * fade / 220)),
+        width=1,
+    )
+    img = Image.alpha_composite(img.convert("RGBA"), pill).convert("RGB")
+
+    # Text — split ref and chapter name with different colors
+    d = ImageDraw.Draw(img)
+    text_y = pill_y + py
+
+    if "   |   " in label:
+        ref_part, name_part = label.split("   |   ", 1)
+        sep = "   |   "
+        ref_w  = tw(d, ref_part, tf)
+        sep_w  = tw(d, sep, tf)
+        tx = pill_x + px
+        img = draw_text_alpha(img, (tx, text_y), ref_part, tf, R_SAGE, fade)
+        img = draw_text_alpha(img, (tx + ref_w, text_y), sep, tf, R_GOLD_LIGHT, int(fade * 0.6))
+        img = draw_text_alpha(img, (tx + ref_w + sep_w, text_y), name_part, tf, R_INK_MUTED, fade)
+    else:
+        img = draw_text_alpha(img, (pill_x + px, text_y), label, tf, R_SAGE, fade)
+
+    return img
+
+
 # ── Section 1: Intro ──────────────────────────────────────────────────────────
 
 def frame_intro(t, shloka, day_number, total=3.0, thumb_path=None):
     """
-    First frame (t=0) = the post image (1080x1080 cropped to 1080x1920).
-    After 1.5s it crossfades into the animated chapter/verse reveal.
-    This makes the thumbnail look like the post image.
+    Intro frame: Krishna background with breathing rings.
+    "Bhagavad Gita" and "Day X of 700" are static from t=0 (thumbnail).
+    Everything else fades in with animation.
     """
-    # ── Static post image as thumbnail (first 1.5s) ───────────────────────
-    THUMB_DUR = 1.5
-    if t < THUMB_DUR:
-        # Use provided thumb_path, or generate one on the fly
-        import os as _os
-        _thumb = thumb_path or _os.path.join(
-            _os.path.dirname(_os.path.abspath(__file__)),
-            "__thumb_cache__.jpg"
-        )
-        if not _os.path.exists(_thumb):
-            from image_gen import create_post_image
-            create_post_image(shloka, _thumb, day_number)
-        try:
-            thumb = Image.open(_thumb).convert("RGB")
-            # Scale 1080x1080 → fit into 1080x1920 with black bars top/bottom
-            tw_, th_ = thumb.size
-            scale = W / tw_
-            new_h = int(th_ * scale)
-            thumb = thumb.resize((W, new_h), Image.LANCZOS)
-            # Paste centered on black canvas
-            canvas = Image.new("RGB", (W, H), (8, 5, 18))
-            y_off = (H - new_h) // 2
-            canvas.paste(thumb, (0, y_off))
-            # Fade out at end of thumbnail section
-            fade_out = smoothstep(prog(t, THUMB_DUR * 0.6, THUMB_DUR))
-            if fade_out > 0.01:
-                dark = Image.new("RGB", (W, H), (8, 5, 18))
-                canvas = Image.blend(canvas, dark, fade_out)
-            return np.array(canvas)
-        except Exception:
-            pass  # fall through to animated intro if image fails
+    img = base_canvas(t, krishna_strength=5.0).convert("RGBA")
 
-    # ── Animated chapter/verse reveal (after thumbnail) ──────────────────
-    t2 = max(0.0, t - THUMB_DUR)
-    total2 = max(total - THUMB_DUR, 1.0)
-
-    img = base_canvas(t).convert("RGBA")
-
-    # Warm saffron color grade
-    warm = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    wd = ImageDraw.Draw(warm)
-    warm_a = int(38 * ease_io(prog(t2, 0.0, 0.6)))
-    wd.rectangle([0, 0, W, H], fill=(200, 90, 10, warm_a))
-    img = Image.alpha_composite(img, warm).convert("RGB")
+    # Darker overlay so text stays readable over the stronger Krishna image
+    dark = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(dark)
+    dd.rectangle([0, 0, W, H], fill=(10, 5, 20, 120))
+    img = Image.alpha_composite(img, dark).convert("RGB")
 
     img = draw_om_on_card(img, t, alpha_max=20)
     img = img.convert("RGBA")
@@ -691,58 +719,60 @@ def frame_intro(t, shloka, day_number, total=3.0, thumb_path=None):
     img = Image.alpha_composite(img, arc_layer).convert("RGB")
     d = ImageDraw.Draw(img)
 
-    p = ease_io(prog(t2, 0.05, total2 * 0.95))
+    p = ease_io(prog(t, 0.05, total * 0.95))
 
-    # "Bhagavad Gita" subtitle
+    # ── STATIC from t=0 (always visible in thumbnail) ─────────────────────
+
+    # "Bhagavad Gita" — bright white with slight glow
     subtitle = "Bhagavad Gita"
-    sf = font(36, False)
-    img = draw_text_alpha(img, (cx(d, subtitle, sf), int(H // 2 - 400 + 24 * (1 - p))),
-                          subtitle, sf, R_SAGE, int(220 * p))
+    sf = font(38, False)
+    img = draw_text_alpha(img, (cx(d, subtitle, sf), H // 2 - 400), subtitle, sf, (255, 255, 255), 255)
     d = ImageDraw.Draw(img)
 
-    # Chapter title
+    # "Day X of 700" — bright saffron orange, bold, clearly visible
+    day_txt = f"Day {day_number} of 700"
+    df = font(40, True)
+    img = draw_text_alpha(img, (cx(d, day_txt, df), H // 2 - 56), day_txt, df, (255, 180, 40), 255)
+    d = ImageDraw.Draw(img)
+
+    # ── FADE IN with animation ─────────────────────────────────────────────
+
+    # Chapter title — fade in
     ch_name = shloka.get("chapter_title", "")
     if ch_name:
         cf = font(30, False)
-        img = draw_text_alpha(img, (cx(d, ch_name, cf), int(H // 2 - 348 + 20 * (1 - p))),
-                              ch_name, cf, R_INK_MUTED,
-                              int(230 * smoothstep(prog(t2, 0.15, total2 * 0.9))))
+        img = draw_text_alpha(img, (cx(d, ch_name, cf), int(H // 2 - 340 + 20 * (1 - p))),
+                              ch_name, cf, (200, 220, 210),
+                              int(220 * smoothstep(prog(t, 0.15, total * 0.9))))
         d = ImageDraw.Draw(img)
 
-    # Chapter · Verse (large)
+    # Chapter · Verse — large, fade in
     cv_txt = f"Chapter {shloka['chapter']}  ·  Verse {shloka['verse']}"
     for fsize in [76, 64, 54]:
         cvf = font(fsize, True)
         if tw(d, cv_txt, cvf) <= W - 100:
             break
     img = draw_text_alpha(img, (cx(d, cv_txt, cvf), int(H // 2 - 240 + 36 * (1 - p))),
-                          cv_txt, cvf, R_INK,
-                          int(255 * smoothstep(prog(t2, 0.2, total2 * 0.85))))
+                          cv_txt, cvf, (255, 255, 255),
+                          int(255 * smoothstep(prog(t, 0.2, total * 0.85))))
     d = ImageDraw.Draw(img)
 
-    # Devanagari
+    # Devanagari — fade in, bright gold
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
     deva_txt = f"अध्याय {shloka['chapter']}, श्लोक {shloka['verse']}"
-    deva_a = int(230 * smoothstep(prog(t2, 0.25, total2 * 0.9)))
+    deva_a = int(230 * smoothstep(prog(t, 0.25, total * 0.9)))
     if hb_path and deva_a > 8:
-        img = dvs.composite_line_centered(img, int(H // 2 - 168 + 14 * (1 - p)),
-                                          deva_txt, hb_path, 36, R_GOLD, deva_a, canvas_w=W)
-    d = ImageDraw.Draw(img)
-
-    # Day counter — "Day X of 700"
-    day_txt = f"Day {day_number} of 700"
-    df = font(32, False)
-    img = draw_text_alpha(img, (cx(d, day_txt, df), int(H // 2 - 100 + 16 * (1 - p))),
-                          day_txt, df, R_GOLD,
-                          int(240 * smoothstep(prog(t2, 0.35, total2))))
+        img = dvs.composite_line_centered(img, int(H // 2 - 148 + 14 * (1 - p)),
+                                          deva_txt, hb_path, 36, (255, 210, 80), deva_a, canvas_w=W)
     d = ImageDraw.Draw(img)
 
     # Gold divider
-    dw = int((W - 200) * smoothstep(prog(t2, 0.25, total2 * 0.75)))
-    yl = H // 2 - 36
+    dw = int((W - 200) * smoothstep(prog(t, 0.25, total * 0.75)))
+    yl = H // 2 - 80
     if dw > 6:
         img = rgba_overlay(img, lambda layer, draw: draw.rectangle(
-            [W // 2 - dw // 2, yl, W // 2 + dw // 2, yl + 2], fill=(*R_GOLD_LIGHT, int(200 * p))))
+            [W // 2 - dw // 2, yl, W // 2 + dw // 2, yl + 2],
+            fill=(*R_GOLD_LIGHT, int(200 * p))))
         d = ImageDraw.Draw(img)
 
     return hud_footer(img, t)
@@ -758,8 +788,8 @@ def frame_sanskrit(t, shloka, total=5.0):
     img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Shloka", R_SAGE, t)
+    img = draw_shloka_subheading(img, shloka, t)
     d = ImageDraw.Draw(img)
-
     sanskrit = shloka.get("sanskrit", "")
     hb_path = dvs.first_font_path(False) if dvs.is_available() else None
     for fsize in [54, 48, 42, 36, 32]:
@@ -830,9 +860,10 @@ def frame_hindi(t, shloka, total=7.0, bridge_sec=0.0):
     img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "हिंदी व्याख्या", R_ROSE, t)
+    img = draw_shloka_subheading(img, shloka, t)
     d = ImageDraw.Draw(img)
 
-    # Enhancement 2: particle burst when text starts appearing
+    # particle burst when text starts appearing
     img = draw_particles(img, t, trigger_t=bridge_sec, cx_=W // 2, cy_=H // 2, color=R_ROSE)
 
     hindi = shloka.get("hindi_explanation", "")
@@ -928,9 +959,10 @@ def frame_lesson(t, shloka, total=6.0, bridge_sec=0.0, lesson_hi_dur=0.0):
     img = draw_real_petals(img, t)
     d = ImageDraw.Draw(img)
     img = draw_section_header(img, "Life Lesson", R_SAGE, t)
+    img = draw_shloka_subheading(img, shloka, t)
     d = ImageDraw.Draw(img)
 
-    # Enhancement 2: particle burst when lesson text appears
+    # particle burst when lesson text appears
     img = draw_particles(img, t, trigger_t=bridge_sec, cx_=W // 2, cy_=H // 2, color=R_SAGE)
 
     hindi_lesson   = shloka.get("life_lesson_hindi", "")
@@ -1135,7 +1167,7 @@ def pick_background_track(bot_dir):
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False, thumb_path=None):
+def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False):
     """
     Generate shloka reel from gita_data.json entry.
 
@@ -1282,7 +1314,7 @@ def create_shloka_reel(shloka, output_path, day_number=1, fast_preview=False, th
         # ── Video clips ───────────────────────────────────────────────────────
         print("  Rendering video sections...")
         clips = [
-            make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"], thumb_path=thumb_path),
+            make_clip(frame_intro,    actual["intro"],    shloka=shloka, day_number=day_number, total=actual["intro"]),
             make_clip(frame_sanskrit, actual["sanskrit"], shloka=shloka, total=actual["sanskrit"]),
             make_clip(frame_hindi,    actual["hindi"],    shloka=shloka, total=actual["hindi"],   bridge_sec=bh + 0.15),
             make_clip(frame_lesson,   actual["lesson"],   shloka=shloka, total=actual["lesson"], bridge_sec=bl + 0.15 + 1.05 + 1.0, lesson_hi_dur=lh_dur),

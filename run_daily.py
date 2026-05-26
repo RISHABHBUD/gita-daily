@@ -139,7 +139,6 @@ def main():
             reel_path,
             day_number,
             fast_preview=bool(args.test and args.fast_preview),
-            thumb_path=image_path,   # reuse already-generated post image as thumbnail
         )
     else:
         reel_path = None
